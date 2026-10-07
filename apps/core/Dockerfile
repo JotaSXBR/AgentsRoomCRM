@@ -38,6 +38,7 @@ COPY --from=build /app/packages/db/package.json ./packages/db/package.json
 COPY --from=build /app/apps/core/dist ./apps/core/dist
 COPY --from=build /app/apps/core/package.json ./apps/core/package.json
 COPY --from=build /app/apps/core/migrations ./apps/core/migrations
+COPY --from=build /app/apps/core/public ./apps/core/public
 COPY --from=build --chmod=755 /app/apps/core/docker-entrypoint.sh ./apps/core/docker-entrypoint.sh
 USER app
 EXPOSE 3000

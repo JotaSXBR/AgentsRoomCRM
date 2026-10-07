@@ -1,12 +1,20 @@
 import { randomUUID } from "node:crypto";
 import type {
+  ContactChannelRecord,
+  ContactEventRecord,
   ContactRecord,
+  ConversationRecord,
+  ConversationStatus,
   InviteRecord,
   MembershipRecord,
   MemberWithUser,
+  MessageRecord,
+  NoteRecord,
   Store,
+  TagRecord,
   UserRecord,
   WorkspaceRecord,
+  WorkspaceUpdates,
 } from "./store.js";
 
 function now(): string {
@@ -20,6 +28,13 @@ export class MemoryStore implements Store {
   readonly memberships = new Map<string, MembershipRecord>();
   readonly invites = new Map<string, InviteRecord>();
   readonly contacts = new Map<string, ContactRecord>();
+  readonly contactChannels = new Map<string, ContactChannelRecord>();
+  readonly contactEvents = new Map<string, ContactEventRecord>();
+  readonly tags = new Map<string, TagRecord>();
+  readonly conversationTags = new Map<string, { conversationId: string; tagId: string }>();
+  readonly conversations = new Map<string, ConversationRecord>();
+  readonly messages = new Map<string, MessageRecord>();
+  readonly notes = new Map<string, NoteRecord>();
 
   private membershipKey(workspaceId: string, userId: string): string {
     return `${workspaceId}:${userId}`;
@@ -182,15 +197,358 @@ export class MemoryStore implements Store {
       name: input.name,
       phone: input.phone ?? null,
       email: input.email ?? null,
+      mergedIntoId: null,
       createdAt: now(),
     };
     this.contacts.set(contact.id, contact);
     return contact;
   }
 
-  async listContacts(workspaceId: string): Promise<ContactRecord[]> {
-    return [...this.contacts.values()].filter(
-      (c) => c.workspaceId === workspaceId,
+  async listContacts(
+    workspaceId: string,
+    query?: { q?: string },
+  ): Promise<ContactRecord[]> {
+    const q = query?.q?.trim().toLowerCase();
+    return [...this.contacts.values()].filter((c) => {
+      if (c.workspaceId !== workspaceId || c.mergedIntoId !== null) return false;
+      if (!q) return true;
+      return (
+        c.name.toLowerCase().includes(q) ||
+        (c.phone ?? "").toLowerCase().includes(q) ||
+        (c.email ?? "").toLowerCase().includes(q)
+      );
+    });
+  }
+
+  async findContactById(
+    workspaceId: string,
+    id: string,
+  ): Promise<ContactRecord | null> {
+    const c = this.contacts.get(id);
+    return c && c.workspaceId === workspaceId ? c : null;
+  }
+
+  async addContactChannel(input: {
+    workspaceId: string;
+    contactId: string;
+    channel: string;
+    value: string;
+  }): Promise<ContactChannelRecord> {
+    const record: ContactChannelRecord = {
+      id: randomUUID(),
+      ...input,
+      createdAt: now(),
+    };
+    this.contactChannels.set(record.id, record);
+    return record;
+  }
+
+  async listContactChannels(
+    workspaceId: string,
+    contactId: string,
+  ): Promise<ContactChannelRecord[]> {
+    return [...this.contactChannels.values()].filter(
+      (c) => c.workspaceId === workspaceId && c.contactId === contactId,
     );
+  }
+
+  async mergeContacts(
+    workspaceId: string,
+    sourceId: string,
+    targetId: string,
+  ): Promise<ContactRecord> {
+    const source = this.contacts.get(sourceId);
+    const target = this.contacts.get(targetId);
+    if (
+      !source ||
+      !target ||
+      source.workspaceId !== workspaceId ||
+      target.workspaceId !== workspaceId ||
+      source.id === target.id
+    ) {
+      throw new Error("merge_invalido");
+    }
+    for (const ch of this.contactChannels.values()) {
+      if (ch.workspaceId === workspaceId && ch.contactId === sourceId) {
+        this.contactChannels.set(ch.id, { ...ch, contactId: targetId });
+      }
+    }
+    for (const conv of this.conversations.values()) {
+      if (conv.workspaceId === workspaceId && conv.contactId === sourceId) {
+        this.conversations.set(conv.id, { ...conv, contactId: targetId, updatedAt: now() });
+      }
+    }
+    for (const ev of this.contactEvents.values()) {
+      if (ev.workspaceId === workspaceId && ev.contactId === sourceId) {
+        this.contactEvents.set(ev.id, { ...ev, contactId: targetId });
+      }
+    }
+    this.contacts.set(sourceId, { ...source, mergedIntoId: targetId });
+    await this.addContactEvent({
+      workspaceId,
+      contactId: targetId,
+      kind: "merge",
+      description: `Contato ${source.name} unificado em ${target.name}.`,
+    });
+    return target;
+  }
+
+  async contactTimeline(
+    workspaceId: string,
+    contactId: string,
+  ): Promise<ContactEventRecord[]> {
+    return [...this.contactEvents.values()]
+      .filter((e) => e.workspaceId === workspaceId && e.contactId === contactId)
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  }
+
+  async addContactEvent(input: {
+    workspaceId: string;
+    contactId: string;
+    conversationId?: string | null;
+    kind: string;
+    actorId?: string | null;
+    description: string;
+  }): Promise<ContactEventRecord> {
+    const record: ContactEventRecord = {
+      id: randomUUID(),
+      workspaceId: input.workspaceId,
+      contactId: input.contactId,
+      conversationId: input.conversationId ?? null,
+      kind: input.kind,
+      actorId: input.actorId ?? null,
+      description: input.description,
+      createdAt: now(),
+    };
+    this.contactEvents.set(record.id, record);
+    return record;
+  }
+
+  async createTag(input: {
+    workspaceId: string;
+    name: string;
+    color?: string | null;
+  }): Promise<TagRecord> {
+    const tag: TagRecord = {
+      id: randomUUID(),
+      workspaceId: input.workspaceId,
+      name: input.name,
+      color: input.color ?? null,
+      createdAt: now(),
+    };
+    this.tags.set(tag.id, tag);
+    return tag;
+  }
+
+  async listTags(workspaceId: string): Promise<TagRecord[]> {
+    return [...this.tags.values()].filter((t) => t.workspaceId === workspaceId);
+  }
+
+  async tagConversation(
+    workspaceId: string,
+    conversationId: string,
+    tagId: string,
+  ): Promise<void> {
+    const conv = this.conversations.get(conversationId);
+    const tag = this.tags.get(tagId);
+    if (!conv || conv.workspaceId !== workspaceId || !tag || tag.workspaceId !== workspaceId) {
+      throw new Error("tag_invalida");
+    }
+    this.conversationTags.set(`${conversationId}:${tagId}`, { conversationId, tagId });
+  }
+
+  async untagConversation(
+    workspaceId: string,
+    conversationId: string,
+    tagId: string,
+  ): Promise<void> {
+    this.conversationTags.delete(`${conversationId}:${tagId}`);
+  }
+
+  async listConversationTags(
+    workspaceId: string,
+    conversationId: string,
+  ): Promise<TagRecord[]> {
+    const out: TagRecord[] = [];
+    for (const link of this.conversationTags.values()) {
+      if (link.conversationId !== conversationId) continue;
+      const tag = this.tags.get(link.tagId);
+      if (tag && tag.workspaceId === workspaceId) out.push(tag);
+    }
+    return out;
+  }
+
+  async createConversation(input: {
+    workspaceId: string;
+    contactId: string;
+    channel: string;
+    subject?: string | null;
+  }): Promise<ConversationRecord> {
+    const contact = this.contacts.get(input.contactId);
+    if (!contact || contact.workspaceId !== input.workspaceId) {
+      throw new Error("contato_invalido");
+    }
+    const conv: ConversationRecord = {
+      id: randomUUID(),
+      workspaceId: input.workspaceId,
+      contactId: input.contactId,
+      channel: input.channel,
+      status: "aberto",
+      assigneeId: null,
+      subject: input.subject ?? null,
+      createdAt: now(),
+      updatedAt: now(),
+    };
+    this.conversations.set(conv.id, conv);
+    return conv;
+  }
+
+  async findConversationById(
+    workspaceId: string,
+    id: string,
+  ): Promise<ConversationRecord | null> {
+    const c = this.conversations.get(id);
+    return c && c.workspaceId === workspaceId ? c : null;
+  }
+
+  async listConversations(
+    workspaceId: string,
+    filter?: {
+      status?: ConversationStatus;
+      assigneeId?: string;
+      tagId?: string;
+      q?: string;
+    },
+  ): Promise<ConversationRecord[]> {
+    const q = filter?.q?.trim().toLowerCase();
+    const taggedIds = new Set<string>();
+    if (filter?.tagId) {
+      for (const link of this.conversationTags.values()) {
+        if (link.tagId === filter.tagId) taggedIds.add(link.conversationId);
+      }
+    }
+    return [...this.conversations.values()]
+      .filter((c) => {
+        if (c.workspaceId !== workspaceId) return false;
+        if (filter?.status && c.status !== filter.status) return false;
+        if (filter?.assigneeId && c.assigneeId !== filter.assigneeId) return false;
+        if (filter?.tagId && !taggedIds.has(c.id)) return false;
+        if (q) {
+          const contact = this.contacts.get(c.contactId);
+          const hay = `${c.subject ?? ""} ${contact?.name ?? ""}`.toLowerCase();
+          if (!hay.includes(q)) return false;
+        }
+        return true;
+      })
+      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  }
+
+  async setConversationStatus(
+    workspaceId: string,
+    id: string,
+    status: ConversationStatus,
+  ): Promise<ConversationRecord | null> {
+    const conv = this.conversations.get(id);
+    if (!conv || conv.workspaceId !== workspaceId) return null;
+    const updated = { ...conv, status, updatedAt: now() };
+    this.conversations.set(id, updated);
+    return updated;
+  }
+
+  async assignConversation(
+    workspaceId: string,
+    id: string,
+    assigneeId: string | null,
+  ): Promise<ConversationRecord | null> {
+    const conv = this.conversations.get(id);
+    if (!conv || conv.workspaceId !== workspaceId) return null;
+    if (assigneeId !== null) {
+      const membership = await this.findMembership(workspaceId, assigneeId);
+      if (!membership) throw new Error("assignee_invalido");
+    }
+    const updated = { ...conv, assigneeId, updatedAt: now() };
+    this.conversations.set(id, updated);
+    return updated;
+  }
+
+  async addMessage(input: {
+    workspaceId: string;
+    conversationId: string;
+    direction: MessageRecord["direction"];
+    authorId?: string | null;
+    kind?: MessageRecord["kind"];
+    text?: string | null;
+    mediaUrl?: string | null;
+  }): Promise<MessageRecord> {
+    const conv = this.conversations.get(input.conversationId);
+    if (!conv || conv.workspaceId !== input.workspaceId) {
+      throw new Error("conversa_invalida");
+    }
+    const msg: MessageRecord = {
+      id: randomUUID(),
+      workspaceId: input.workspaceId,
+      conversationId: input.conversationId,
+      direction: input.direction,
+      authorId: input.authorId ?? null,
+      kind: input.kind ?? "texto",
+      text: input.text ?? null,
+      mediaUrl: input.mediaUrl ?? null,
+      createdAt: now(),
+    };
+    this.messages.set(msg.id, msg);
+    this.conversations.set(conv.id, { ...conv, updatedAt: now() });
+    return msg;
+  }
+
+  async listMessages(
+    workspaceId: string,
+    conversationId: string,
+    options?: { since?: string },
+  ): Promise<MessageRecord[]> {
+    return [...this.messages.values()]
+      .filter(
+        (m) =>
+          m.workspaceId === workspaceId &&
+          m.conversationId === conversationId &&
+          (!options?.since || m.createdAt > options.since),
+      )
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  }
+
+  async addNote(input: {
+    workspaceId: string;
+    conversationId: string;
+    authorId: string;
+    content: string;
+  }): Promise<NoteRecord> {
+    const conv = this.conversations.get(input.conversationId);
+    if (!conv || conv.workspaceId !== input.workspaceId) {
+      throw new Error("conversa_invalida");
+    }
+    const note: NoteRecord = { id: randomUUID(), ...input, createdAt: now() };
+    this.notes.set(note.id, note);
+    return note;
+  }
+
+  async listNotes(
+    workspaceId: string,
+    conversationId: string,
+  ): Promise<NoteRecord[]> {
+    return [...this.notes.values()]
+      .filter((n) => n.workspaceId === workspaceId && n.conversationId === conversationId)
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  }
+
+  async listUpdates(workspaceId: string, since: string): Promise<WorkspaceUpdates> {
+    const conversations = [...this.conversations.values()].filter(
+      (c) => c.workspaceId === workspaceId && c.updatedAt > since,
+    );
+    const messages = [...this.messages.values()].filter(
+      (m) => m.workspaceId === workspaceId && m.createdAt > since,
+    );
+    const notes = [...this.notes.values()].filter(
+      (n) => n.workspaceId === workspaceId && n.createdAt > since,
+    );
+    return { conversations, messages, notes };
   }
 }

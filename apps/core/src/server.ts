@@ -26,6 +26,13 @@ async function main(): Promise<void> {
     jwtExpiresIn: config.jwtExpiresIn,
     inviteTtlHours: config.inviteTtlHours,
     logger: true,
+    s3: {
+      s3Endpoint: config.s3Endpoint,
+      s3Region: config.s3Region,
+      s3AccessKey: config.s3AccessKey,
+      s3SecretKey: config.s3SecretKey,
+      s3BucketMidia: config.s3BucketMidia,
+    },
   });
 
   const shutdown = async (): Promise<void> => {

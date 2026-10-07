@@ -53,7 +53,86 @@ export interface ContactRecord {
   name: string;
   phone: string | null;
   email: string | null;
+  /** Contato absorvido por um merge aponta para o sobrevivente. */
+  mergedIntoId: string | null;
   createdAt: string;
+}
+
+/** Canal do contato unificado (multicanal: whatsapp, e-mail, ...). */
+export interface ContactChannelRecord {
+  id: string;
+  workspaceId: string;
+  contactId: string;
+  channel: string;
+  value: string;
+  createdAt: string;
+}
+
+export type ConversationStatus = "aberto" | "pendente" | "resolvido";
+
+export interface ConversationRecord {
+  id: string;
+  workspaceId: string;
+  contactId: string;
+  channel: string;
+  status: ConversationStatus;
+  assigneeId: string | null;
+  subject: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ConversationTagRecord {
+  conversationId: string;
+  tagId: string;
+}
+
+export interface TagRecord {
+  id: string;
+  workspaceId: string;
+  name: string;
+  color: string | null;
+  createdAt: string;
+}
+
+export interface MessageRecord {
+  id: string;
+  workspaceId: string;
+  conversationId: string;
+  direction: "entrada" | "saida";
+  authorId: string | null;
+  kind: "texto" | "midia" | "sistema";
+  text: string | null;
+  mediaUrl: string | null;
+  createdAt: string;
+}
+
+export interface NoteRecord {
+  id: string;
+  workspaceId: string;
+  conversationId: string;
+  authorId: string;
+  content: string;
+  createdAt: string;
+}
+
+/** Evento da timeline do contato (merge, notas de canal, etc.). */
+export interface ContactEventRecord {
+  id: string;
+  workspaceId: string;
+  contactId: string;
+  conversationId: string | null;
+  kind: string;
+  actorId: string | null;
+  description: string;
+  createdAt: string;
+}
+
+/** Lanche de atualizações para polling fallback. */
+export interface WorkspaceUpdates {
+  conversations: ConversationRecord[];
+  messages: MessageRecord[];
+  notes: NoteRecord[];
 }
 
 /**
@@ -111,7 +190,84 @@ export interface Store {
     phone?: string | null;
     email?: string | null;
   }): Promise<ContactRecord>;
-  listContacts(workspaceId: string): Promise<ContactRecord[]>;
+  listContacts(workspaceId: string, query?: { q?: string }): Promise<ContactRecord[]>;
+  findContactById(workspaceId: string, id: string): Promise<ContactRecord | null>;
+  addContactChannel(input: {
+    workspaceId: string;
+    contactId: string;
+    channel: string;
+    value: string;
+  }): Promise<ContactChannelRecord>;
+  listContactChannels(workspaceId: string, contactId: string): Promise<ContactChannelRecord[]>;
+  /** Move canais/conversas/eventos de `sourceId` para `targetId` e marca o source como absorvido. */
+  mergeContacts(workspaceId: string, sourceId: string, targetId: string): Promise<ContactRecord>;
+  contactTimeline(workspaceId: string, contactId: string): Promise<ContactEventRecord[]>;
+  addContactEvent(input: {
+    workspaceId: string;
+    contactId: string;
+    conversationId?: string | null;
+    kind: string;
+    actorId?: string | null;
+    description: string;
+  }): Promise<ContactEventRecord>;
+
+  // tags
+  createTag(input: {
+    workspaceId: string;
+    name: string;
+    color?: string | null;
+  }): Promise<TagRecord>;
+  listTags(workspaceId: string): Promise<TagRecord[]>;
+  tagConversation(workspaceId: string, conversationId: string, tagId: string): Promise<void>;
+  untagConversation(workspaceId: string, conversationId: string, tagId: string): Promise<void>;
+  listConversationTags(workspaceId: string, conversationId: string): Promise<TagRecord[]>;
+
+  // inbox (conversas, mensagens, notas)
+  createConversation(input: {
+    workspaceId: string;
+    contactId: string;
+    channel: string;
+    subject?: string | null;
+  }): Promise<ConversationRecord>;
+  findConversationById(workspaceId: string, id: string): Promise<ConversationRecord | null>;
+  listConversations(
+    workspaceId: string,
+    filter?: { status?: ConversationStatus; assigneeId?: string; tagId?: string; q?: string },
+  ): Promise<ConversationRecord[]>;
+  setConversationStatus(
+    workspaceId: string,
+    id: string,
+    status: ConversationStatus,
+  ): Promise<ConversationRecord | null>;
+  assignConversation(
+    workspaceId: string,
+    id: string,
+    assigneeId: string | null,
+  ): Promise<ConversationRecord | null>;
+  addMessage(input: {
+    workspaceId: string;
+    conversationId: string;
+    direction: MessageRecord["direction"];
+    authorId?: string | null;
+    kind?: MessageRecord["kind"];
+    text?: string | null;
+    mediaUrl?: string | null;
+  }): Promise<MessageRecord>;
+  listMessages(
+    workspaceId: string,
+    conversationId: string,
+    options?: { since?: string },
+  ): Promise<MessageRecord[]>;
+  addNote(input: {
+    workspaceId: string;
+    conversationId: string;
+    authorId: string;
+    content: string;
+  }): Promise<NoteRecord>;
+  listNotes(workspaceId: string, conversationId: string): Promise<NoteRecord[]>;
+
+  /** Polling fallback: tudo atualizado depois de `since` (ISO). */
+  listUpdates(workspaceId: string, since: string): Promise<WorkspaceUpdates>;
 }
 
 export type { WorkspaceMemberRole, WorkspaceRole };

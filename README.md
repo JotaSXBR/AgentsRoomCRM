@@ -1,10 +1,11 @@
 # AgentsRoomCRM
 
-Monorepo TypeScript — F0: fundação + auth/workspaces + Coolify.
+Monorepo TypeScript — F0: fundação + auth/workspaces + Coolify. F1: inbox + contatos unificados + realtime/mobile.
 
 ```
 apps/
-  core/            API (Fastify): auth JWT, workspaces, convites, isolamento tenant
+  core/            API (Fastify): auth JWT, workspaces, convites, isolamento tenant,
+                   inbox unificado, contatos multicanal, realtime (ws + polling), presign S3
 packages/
   shared/          papéis, RBAC, tipos, erros HTTP (@agentsroom/shared)
   db/              helpers multi-tenant + RLS (@agentsroom/db)
@@ -54,6 +55,16 @@ Detalhes em [`coolify/README.md`](coolify/README.md).
 | POST | `/workspaces/:id/invites` | `admin_ws` ou dono |
 | POST | `/invites/accept` | dono do e-mail convidado |
 | GET / POST | `/workspaces/:id/contacts` | membro ou dono |
+| GET | `/workspaces/:id/contacts/:id`, `.../timeline` | membro ou dono |
+| POST | `/workspaces/:id/contacts/:id/channels`, `.../merge` | membro ou dono |
+| GET / POST | `/workspaces/:id/inbox/conversations` | membro ou dono |
+| GET / PATCH | `/workspaces/:id/inbox/conversations/:id` | membro ou dono |
+| GET / POST | `/workspaces/:id/inbox/conversations/:id/messages|notes|tags` | membro ou dono |
+| GET / POST | `/workspaces/:id/tags` | membro ou dono |
+| GET | `/workspaces/:id/inbox/updates?since=` (polling fallback) | membro ou dono |
+| GET | `/workspaces/:id/ws?token=` (websocket room `ws:{id}`) | membro ou dono |
+| POST | `/workspaces/:id/media/presign` | membro ou dono |
+| GET | `/app/inbox` (web responsivo, modo reduzido mobile) | público (usa token na UI) |
 
 Critérios F0: push na main rebuilda só o core (`cd-core.yml` com `paths:`),
 staging com recursos próprios, e `tests/isolation.test.ts` falha com 403

@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Inbox — AgentsRoomCRM</title>
+<style>
+  :root { --bg:#0f172a; --panel:#1e293b; --line:#334155; --tx:#e2e8f0; --mut:#94a3b8; --ac:#38bdf8; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: system-ui, sans-serif; background:var(--bg); color:var(--tx); }
+  header { display:flex; gap:8px; padding:8px 12px; background:var(--panel); align-items:center; flex-wrap:wrap; }
+  header input { background:#0f172a; color:var(--tx); border:1px solid var(--line); border-radius:6px; padding:6px 8px; flex:1; min-width:120px; }
+  header button { background:var(--ac); color:#082f49; border:0; border-radius:6px; padding:8px 12px; font-weight:600; cursor:pointer; }
+  main { display:grid; grid-template-columns: 320px 1fr; height: calc(100vh - 52px); }
+  #list { border-right:1px solid var(--line); overflow:auto; }
+  .conv { padding:10px 12px; border-bottom:1px solid var(--line); cursor:pointer; }
+  .conv:hover, .conv.sel { background:#162033; }
+  .conv b { display:block; }
+  .conv small { color:var(--mut); }
+  #detail { display:flex; flex-direction:column; overflow:hidden; }
+  #convo-head { padding:10px 12px; border-bottom:1px solid var(--line); display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  #convo-head select, #convo-head button { background:var(--panel); color:var(--tx); border:1px solid var(--line); border-radius:6px; padding:6px; }
+  #msgs { flex:1; overflow:auto; padding:12px; }
+  .msg { margin:0 0 8px; }
+  .msg.out { text-align:right; }
+  .msg span { display:inline-block; padding:8px 10px; border-radius:10px; background:var(--panel); max-width:80%; }
+  .msg.out span { background:#0c4a6e; }
+  #composer { display:flex; gap:8px; padding:10px; border-top:1px solid var(--line); }
+  #composer input { flex:1; background:var(--panel); color:var(--tx); border:1px solid var(--line); border-radius:6px; padding:10px; }
+  #side { display:grid; grid-template-columns:1fr 1fr; gap:0; border-top:1px solid var(--line); max-height:34vh; overflow:auto; }
+  #notes, #tags { padding:10px 12px; }
+  #notes { border-right:1px solid var(--line); }
+  .note { background:var(--panel); border-radius:8px; padding:6px 8px; margin:0 0 6px; font-size:13px; }
+  .tagchip { display:inline-block; background:#334155; border-radius:12px; padding:2px 8px; margin:0 4px 4px 0; font-size:12px; }
+  #back { display:none; }
+  @media (max-width: 720px) {
+    main { grid-template-columns: 1fr; }
+    #detail { display:none; }
+    body.convo #list { display:none; }
+    body.convo #detail { display:flex; }
+    #side { display:none; }              /* modo reduzido mobile: só responder */
+    #back { display:inline-block; }
+    #composer input { font-size:16px; }   /* evita zoom no iOS */
+  }
+</style>
+</head>
+<body>
+<header>
+  <button id="back" onclick="document.body.classList.remove('convo')">←</button>
+  <input id="tok" placeholder="Bearer token">
+  <input id="wsid" placeholder="workspaceId">
+  <button onclick="connect()">Entrar</button>
+  <input id="q" placeholder="Pesquisar…" oninput="loadList()">
+  <select id="fstatus" onchange="loadList()">
+    <option value="">Todas</option><option>aberto</option><option>pendente</option><option>resolvido</option>
+  </select>
+</header>
+<main>
+  <div id="list"></div>
+  <section id="detail">
+    <div id="convo-head">
+      <b id="cname">—</b>
+      <select id="cstatus" onchange="patch({status:this.value})"><option>aberto</option><option>pendente</option><option>resolvido</option></select>
+      <input id="assignee" placeholder="assigneeId" size="10">
+      <button onclick="patch({assigneeId: document.getElementById('assignee').value || null})">Atribuir</button>
+      <small id="rt" style="color:var(--mut)"></small>
+    </div>
+    <div id="msgs"></div>
+    <form id="composer" onsubmit="return send(event)">
+      <input id="txt" placeholder="Responder em campo…">
+      <button>Enviar</button>
+    </form>
+    <div id="side">
+      <div id="notes"><b>Notas internas</b><div id="notes-list"></div>
+        <form onsubmit="return addNote(event)"><input id="note" placeholder="Nota interna…"><button>+</button></form>
+      </div>
+      <div id="tags"><b>Tags</b><div id="tags-list"></div></div>
+    </div>
+  </section>
+</main>
+<script>
+const S = { tok:"", ws:"", convId:null, lastEventAt:"" };
+const H = () => ({ authorization: "Bearer " + S.tok, "content-type": "application/json" });
+const api = (p, o={}) => fetch(p, { ...o, headers: { ...H(), ...(o.headers||{}) } }).then(r => r.ok ? r.json() : Promise.reject(r.status));
+
+async function loadList() {
+  if (!S.tok) return;
+  const q = document.getElementById('q').value;
+  const st = document.getElementById('fstatus').value;
+  const r = await api(`/workspaces/${S.ws}/inbox/conversations?q=${encodeURIComponent(q)}&status=${st}`).catch(()=>({data:[]}));
+  document.getElementById('list').innerHTML = r.data.map(c =>
+    `<div class="conv ${c.id===S.convId?'sel':''}" onclick="open('${c.id}')"><b>${c.subject||c.channel}</b><small>${c.status} · ${c.assigneeId?c.assigneeId.slice(0,6):'sem atendente'}</small></div>`).join('');
+}
+async function open(id) {
+  S.convId = id; document.body.classList.add('convo');
+  const c = await api(`/workspaces/${S.ws}/inbox/conversations/${id}`);
+  document.getElementById('cname').textContent = c.subject || c.channel;
+  document.getElementById('cstatus').value = c.status;
+  document.getElementById('msgs').innerHTML = c.messages.map(m =>
+    `<p class="msg ${m.direction==='saida'?'out':''}"><span>${m.text||('['+m.kind+'] '+(m.mediaUrl||''))}</span></p>`).join('');
+  document.getElementById('notes-list').innerHTML = c.notes.map(n => `<div class="note">${n.content}</div>`).join('');
+  document.getElementById('tags-list').innerHTML = c.tags.map(t => `<span class="tagchip">${t.name}</span>`).join('');
+  loadList();
+}
+async function patch(body) { if (S.convId) await api(`/workspaces/${S.ws}/inbox/conversations/${S.convId}`, {method:'PATCH', body:JSON.stringify(body)}); }
+async function send(e) {
+  e.preventDefault();
+  const v = document.getElementById('txt').value; if (!v || !S.convId) return false;
+  await api(`/workspaces/${S.ws}/inbox/conversations/${S.convId}/messages`, {method:'POST', body:JSON.stringify({text:v, direction:'saida'})});
+  document.getElementById('txt').value = '';
+  open(S.convId); return false;
+}
+async function addNote(e) {
+  e.preventDefault();
+  const v = document.getElementById('note').value; if (!v || !S.convId) return false;
+  await api(`/workspaces/${S.ws}/inbox/conversations/${S.convId}/notes`, {method:'POST', body:JSON.stringify({content:v})});
+  document.getElementById('note').value=''; open(S.convId); return false;
+}
+function connect() {
+  S.tok = document.getElementById('tok').value.replace(/^Bearer\s+/i,'');
+  S.ws = document.getElementById('wsid').value;
+  S.lastEventAt = new Date().toISOString();
+  loadList();
+  const wsUrl = `${location.protocol==='https:'?'wss':'ws'}://${location.host}/workspaces/${S.ws}/ws?token=${encodeURIComponent(S.tok)}`;
+  let ws;
+  try { ws = new WebSocket(wsUrl); } catch { return polling(); }
+  ws.onmessage = (ev) => {
+    const e = JSON.parse(ev.data);
+    document.getElementById('rt').textContent = 'realtime ●';
+    S.lastEventAt = e.at || S.lastEventAt;
+    if (e.kind && e.kind.startsWith('mensagem') && e.data?.conversationId === S.convId) open(S.convId);
+    if (e.kind && e.kind.startsWith('conversa')) loadList();
+  };
+  ws.onerror = () => polling();
+  ws.onclose = (ev) => {
+    document.getElementById('rt').textContent = 'polling ↻';
+    if (ev.code === 4401 || ev.code === 4403) return; // sem retry em erro de acesso
+    polling();
+  };
+}
+let pollTimer = null;
+function polling() {
+  if (pollTimer) return;
+  pollTimer = setInterval(async () => {
+    if (!S.tok) return;
+    const u = await api(`/workspaces/${S.ws}/inbox/updates?since=${encodeURIComponent(S.lastEventAt)}`).catch(()=>null);
+    if (!u) return;
+    if (u.messages.length || u.conversations.length || u.notes.length) {
+      document.getElementById('rt').textContent = 'polling ↻';
+      loadList();
+      if (S.convId && u.messages.some(m => m.conversationId === S.convId)) open(S.convId);
+      S.lastEventAt = new Date().toISOString();
+    }
+  }, 5000);
+}
+</script>
+</body>
+</html>

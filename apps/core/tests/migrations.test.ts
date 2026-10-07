@@ -3,7 +3,18 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 const MIGRATIONS_DIR = path.resolve(__dirname, "../migrations");
-const TENANT_TABLES = ["workspace_members", "invites", "contacts"];
+const TENANT_TABLES = [
+  "workspace_members",
+  "invites",
+  "contacts",
+  "contact_channels",
+  "tags",
+  "conversations",
+  "conversation_tags",
+  "messages",
+  "notes",
+  "contact_events",
+];
 const ALL_TABLES = ["users", "workspaces", ...TENANT_TABLES];
 
 function readAllSql(): string {

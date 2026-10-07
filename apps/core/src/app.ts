@@ -6,11 +6,15 @@ import { z } from "zod";
 import { HttpError } from "@agentsroom/shared";
 import type { Store } from "./stores/store.js";
 import { registerAuth } from "./plugins/auth.js";
+import { RealtimeHub } from "./realtime/hub.js";
 import { healthRoutes } from "./routes/health.js";
 import { authRoutes } from "./routes/auth.js";
 import { workspaceRoutes } from "./routes/workspaces.js";
 import { inviteRoutes } from "./routes/invites.js";
 import { contactRoutes } from "./routes/contacts.js";
+import { inboxRoutes } from "./routes/inbox.js";
+import { mediaRoutes } from "./routes/media.js";
+import { webRoutes } from "./routes/web.js";
 
 export interface BuildAppOptions {
   store: Store;
@@ -18,6 +22,13 @@ export interface BuildAppOptions {
   jwtExpiresIn?: string;
   inviteTtlHours?: number;
   logger?: boolean;
+  s3?: {
+    s3Endpoint: string | null;
+    s3Region: string;
+    s3AccessKey: string | null;
+    s3SecretKey: string | null;
+    s3BucketMidia: string;
+  };
 }
 
 export async function buildApp(options: BuildAppOptions): Promise<FastifyInstance> {
@@ -67,11 +78,22 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     });
   });
 
+  const hub = new RealtimeHub();
+
   await healthRoutes(app);
   await authRoutes(app, options.store, options.jwtExpiresIn ?? "12h");
   await workspaceRoutes(app, options.store);
   await inviteRoutes(app, options.store, options.inviteTtlHours ?? 72);
   await contactRoutes(app, options.store);
+  await inboxRoutes(app, options.store, hub);
+  await mediaRoutes(app, options.store, options.s3 ?? {
+    s3Endpoint: null,
+    s3Region: "us-east-1",
+    s3AccessKey: null,
+    s3SecretKey: null,
+    s3BucketMidia: "crm-midia",
+  });
+  await webRoutes(app);
 
   return app;
 }
