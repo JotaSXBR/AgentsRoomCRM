@@ -1,0 +1,13 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "rootDir": "../..",
+    "noEmit": true,
+    "baseUrl": ".",
+    "paths": {
+      "@agentsroom/shared": ["../../packages/shared/src/index.ts"],
+      "@agentsroom/db": ["../../packages/db/src/index.ts"]
+    }
+  },
+  "include": ["src", "tests"]
+}

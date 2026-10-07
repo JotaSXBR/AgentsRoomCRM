@@ -1,0 +1,31 @@
+# Critério F0: push na main rebuilda SÓ o core.
+# Este workflow só dispara quando arquivos do core (ou do Dockerfile) mudam,
+# e constrói apenas apps/core/Dockerfile — demais serviços não são tocados.
+
+name: cd-core
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "apps/core/**"
+      - "packages/**"
+      - "package.json"
+      - "package-lock.json"
+      - "tsconfig.base.json"
+
+jobs:
+  build-core:
+    name: build imagem do core
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/core/Dockerfile
+          push: false
+          tags: agentsroom-core:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

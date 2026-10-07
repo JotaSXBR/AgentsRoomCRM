@@ -1,0 +1,5 @@
+# Preservar LF em arquivos executados/carregados no Linux (Coolify roda Linux;
+# checkout Windows com autocrlf quebraria shebang e confs).
+*.sh text eol=lf
+**/Dockerfile text eol=lf
+coolify/redis/redis.conf text eol=lf

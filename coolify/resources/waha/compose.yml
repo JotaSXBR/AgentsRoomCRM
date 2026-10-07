@@ -1,0 +1,21 @@
+# Stack do recurso `waha` (colar num Service "Docker Compose Empty", por ambiente).
+# Engine GOWS = deploy oficial sem browser (devlikeapro/waha:gows).
+# Coolify: ativar "Connect To Predefined Network" para juntar esta stack à
+# rede `coolify` (sem isso, o core não resolve o hostname interno em F1).
+
+services:
+  waha:
+    image: devlikeapro/waha:gows
+    restart: unless-stopped
+    environment:
+      WHATSAPP_DEFAULT_ENGINE: GOWS
+      WAHA_API_KEY: ${WAHA_API_KEY:?defina WAHA_API_KEY no ambiente}
+      WAHA_API_KEY_EXCLUDE_PATH: health,ping
+      WAHA_DASHBOARD_USERNAME: ${WAHA_DASHBOARD_USERNAME:-admin}
+      WAHA_DASHBOARD_PASSWORD: ${WAHA_DASHBOARD_PASSWORD:?defina WAHA_DASHBOARD_PASSWORD no ambiente}
+      WAHA_LOG_LEVEL: ${WAHA_LOG_LEVEL:-info}
+    volumes:
+      - waha-data:/app/.sessions
+
+volumes:
+  waha-data:

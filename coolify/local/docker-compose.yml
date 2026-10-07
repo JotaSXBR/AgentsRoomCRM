@@ -1,0 +1,107 @@
+# Stack LOCAL de desenvolvimento — `docker compose -f coolify/local/docker-compose.yml up`.
+# Sobe tudo de uma vez na máquina do dev. NÃO usar em prod/staging: lá cada
+# serviço é um recurso separado do Coolify (ver coolify/resources/).
+
+name: agentsroom-local
+
+services:
+  core:
+    build:
+      context: ../..
+      dockerfile: apps/core/Dockerfile
+    image: agentsroom-core:local
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "3000:3000"
+    environment:
+      NODE_ENV: development
+      PORT: 3000
+      HOST: 0.0.0.0
+      STORE_DRIVER: postgres
+      DATABASE_URL_MIGRATOR: postgres://postgres:postgres@postgres:5432/agentsroom
+      DATABASE_URL: postgres://app_user:app_user_dev@postgres:5432/agentsroom
+      APP_DB_PASSWORD: app_user_dev
+      REDIS_URL: redis://redis:6379
+      JWT_SECRET: dev-secret-trocar
+      OWNER_EMAIL: dono@local.test
+      OWNER_PASSWORD: senha-forte-local
+    networks: [internal]
+
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: agentsroom
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    volumes:
+      - pgdata-local:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d agentsroom"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks: [internal]
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "/etc/redis/redis.conf"]
+    volumes:
+      - redisdata-local:/data
+      - ../resources/redis/redis.conf:/etc/redis/redis.conf:ro
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks: [internal]
+
+  waha:
+    image: devlikeapro/waha:gows
+    restart: unless-stopped
+    environment:
+      WHATSAPP_DEFAULT_ENGINE: GOWS
+      WAHA_LOG_LEVEL: debug
+    volumes:
+      - waha-local:/app/.sessions
+    networks: [internal]
+
+  rustfs:
+    image: rustfs/rustfs:latest
+    restart: unless-stopped
+    command: ["/data"]
+    environment:
+      RUSTFS_ACCESS_KEY: local-access
+      RUSTFS_SECRET_KEY: local-secret-trocar
+      RUSTFS_ADDRESS: ":9000"
+      RUSTFS_CONSOLE_ADDRESS: ":9001"
+      RUSTFS_CONSOLE_ENABLE: "true"
+      RUSTFS_OBS_LOGGER_LEVEL: error
+    volumes:
+      - rustfs-local:/data
+    networks: [internal]
+
+  ollama:
+    image: ollama/ollama:latest
+    restart: unless-stopped
+    profiles: ["ai"]
+    volumes:
+      - ollama-local:/root/.ollama
+    networks: [internal]
+
+volumes:
+  pgdata-local:
+  redisdata-local:
+  waha-local:
+  rustfs-local:
+  ollama-local:
+
+networks:
+  internal:
+    driver: bridge
