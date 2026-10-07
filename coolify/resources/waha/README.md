@@ -27,4 +27,7 @@ própria; GOWS é o engine Go sem browser (deploy oficial
   database `waha` no `postgres` do ambiente (mesmo servidor, database novo).
 - Mídia em S3: `WAHA_MEDIA_STORAGE=S3` + `WAHA_S3_*` contra o `storage`
   (path-style, como a doc do WAHA exige para S3-compatíveis).
-- Webhook → `POST /webhooks/waha` do core (endpoint ainda não existe).
+- Webhook → `POST /webhooks/waha` do core (F2a: implementado, idempotente
+  por `(source, external_id)`; segredo via `WAHA_WEBHOOK_SECRET`).
+- Redis: `REDIS_URL` habilita jobs/filas em background do WAHA (full
+  capabilities); sem ele o WAHA cai para modo limitado.

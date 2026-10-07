@@ -30,6 +30,7 @@ services:
       JWT_SECRET: dev-secret-trocar
       OWNER_EMAIL: dono@local.test
       OWNER_PASSWORD: senha-forte-local
+      WAHA_API_URL: http://waha:3000
     networks: [internal]
 
   postgres:
@@ -68,6 +69,9 @@ services:
     environment:
       WHATSAPP_DEFAULT_ENGINE: GOWS
       WAHA_LOG_LEVEL: debug
+      REDIS_URL: redis://redis:6379
+      WAHA_HOOK_URL: http://core:3000/webhooks/waha
+      WAHA_HOOK_EVENTS: message,session.status
     volumes:
       - waha-local:/app/.sessions
     networks: [internal]

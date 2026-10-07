@@ -12,10 +12,16 @@
     "typecheck": "npm run typecheck --workspaces --if-present",
     "test": "npm run test --workspaces --if-present",
     "dev:core": "npm run dev --workspace=@agentsroom/core",
-    "migrate": "npm run migrate --workspace=@agentsroom/core"
+    "migrate": "npm run migrate --workspace=@agentsroom/core",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "lint:types": "eslint --config eslint.typed.config.mjs ."
   },
   "devDependencies": {
-    "typescript": "^5.6.3"
+    "@eslint/js": "^9.39.5",
+    "eslint": "^9.39.5",
+    "typescript": "^5.6.3",
+    "typescript-eslint": "^8.71.1"
   },
   "engines": {
     "node": ">=20"

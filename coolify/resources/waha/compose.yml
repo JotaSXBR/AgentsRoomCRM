@@ -14,6 +14,12 @@ services:
       WAHA_DASHBOARD_USERNAME: ${WAHA_DASHBOARD_USERNAME:-admin}
       WAHA_DASHBOARD_PASSWORD: ${WAHA_DASHBOARD_PASSWORD:?defina WAHA_DASHBOARD_PASSWORD no ambiente}
       WAHA_LOG_LEVEL: ${WAHA_LOG_LEVEL:-info}
+      # Redis "full capabilities": filas/jobs em background do WAHA.
+      REDIS_URL: ${REDIS_URL:?defina REDIS_URL (mesma do core)}
+      # Webhook → core (intake normalizado, idempotente).
+      WAHA_HOOK_URL: ${WAHA_HOOK_URL:-http://core:3000/webhooks/waha}
+      WAHA_HOOK_EVENTS: ${WAHA_HOOK_EVENTS:-message,session.status}
+      WAHA_HOOK_RETRIES_POLICY: ${WAHA_HOOK_RETRIES_POLICY:-linear}
     volumes:
       - waha-data:/app/.sessions
 

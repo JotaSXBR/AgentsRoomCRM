@@ -15,6 +15,10 @@ import { contactRoutes } from "./routes/contacts.js";
 import { inboxRoutes } from "./routes/inbox.js";
 import { mediaRoutes } from "./routes/media.js";
 import { webRoutes } from "./routes/web.js";
+import { widgetRoutes } from "./routes/widget.js";
+import { whatsappRoutes } from "./routes/whatsapp.js";
+import { webhookRoutes } from "./routes/webhooks.js";
+import type { WhatsAppAdapter } from "./waha/adapter.js";
 
 export interface BuildAppOptions {
   store: Store;
@@ -29,6 +33,61 @@ export interface BuildAppOptions {
     s3SecretKey: string | null;
     s3BucketMidia: string;
   };
+  waha?: {
+    adapter?: WhatsAppAdapter | null;
+    webhookSecret?: string | null;
+  };
+}
+
+function defaultS3Options(): NonNullable<BuildAppOptions["s3"]> {
+  return {
+    s3Endpoint: null,
+    s3Region: "us-east-1",
+    s3AccessKey: null,
+    s3SecretKey: null,
+    s3BucketMidia: "crm-midia",
+  };
+}
+
+async function registerRoutes(
+  app: FastifyInstance,
+  options: BuildAppOptions,
+  hub: RealtimeHub,
+): Promise<void> {
+  await healthRoutes(app);
+  await authRoutes(app, options.store, options.jwtExpiresIn ?? "12h");
+  await workspaceRoutes(app, options.store);
+  await inviteRoutes(app, options.store, options.inviteTtlHours ?? 72);
+  await contactRoutes(app, options.store);
+  await inboxRoutes(app, options.store, hub);
+  await mediaRoutes(app, options.store, options.s3 ?? defaultS3Options());
+  await webRoutes(app);
+  await widgetRoutes(app, options.store, hub);
+  await whatsappRoutes(app, options.store, options.waha?.adapter ?? null);
+  await webhookRoutes(app, options.store, hub, {
+    webhookSecret: options.waha?.webhookSecret ?? null,
+  });
+}
+
+function isInvalidMediaTypeError(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    (error as { code: string }).code === "FST_ERR_CTP_INVALID_MEDIA_TYPE"
+  );
+}
+
+function resolveStatusCode(error: unknown): number {
+  if (
+    typeof error === "object" &&
+    error !== null &&
+    "statusCode" in error &&
+    typeof (error as { statusCode: unknown }).statusCode === "number"
+  ) {
+    return (error as { statusCode: number }).statusCode as number;
+  }
+  return 500;
 }
 
 export async function buildApp(options: BuildAppOptions): Promise<FastifyInstance> {
@@ -56,21 +115,10 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
         })),
       });
     }
-    if (
-      typeof error === "object" &&
-      error !== null &&
-      "code" in error &&
-      (error as { code: string }).code === "FST_ERR_CTP_INVALID_MEDIA_TYPE"
-    ) {
+    if (isInvalidMediaTypeError(error)) {
       return reply.code(400).send({ code: "validacao", message: "JSON inválido." });
     }
-    const status =
-      typeof error === "object" &&
-      error !== null &&
-      "statusCode" in error &&
-      typeof (error as { statusCode: unknown }).statusCode === "number"
-        ? ((error as { statusCode: number }).statusCode as number)
-        : 500;
+    const status = resolveStatusCode(error);
     if (status >= 500) app.log.error(error);
     return reply.code(status).send({
       code: status === 500 ? "erro_interno" : "erro",
@@ -79,21 +127,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   });
 
   const hub = new RealtimeHub();
-
-  await healthRoutes(app);
-  await authRoutes(app, options.store, options.jwtExpiresIn ?? "12h");
-  await workspaceRoutes(app, options.store);
-  await inviteRoutes(app, options.store, options.inviteTtlHours ?? 72);
-  await contactRoutes(app, options.store);
-  await inboxRoutes(app, options.store, hub);
-  await mediaRoutes(app, options.store, options.s3 ?? {
-    s3Endpoint: null,
-    s3Region: "us-east-1",
-    s3AccessKey: null,
-    s3SecretKey: null,
-    s3BucketMidia: "crm-midia",
-  });
-  await webRoutes(app);
+  await registerRoutes(app, options, hub);
 
   return app;
 }

@@ -3,6 +3,7 @@ import { buildApp } from "./app.js";
 import { MemoryStore } from "./stores/memory.js";
 import { PostgresStore, createPool } from "./stores/postgres.js";
 import { closeInfra } from "./infra.js";
+import { createWahaHttpAdapter } from "./waha/wahaHttpAdapter.js";
 
 async function main(): Promise<void> {
   const config = loadConfig();
@@ -32,6 +33,15 @@ async function main(): Promise<void> {
       s3AccessKey: config.s3AccessKey,
       s3SecretKey: config.s3SecretKey,
       s3BucketMidia: config.s3BucketMidia,
+    },
+    waha: {
+      adapter: config.wahaApiUrl
+        ? createWahaHttpAdapter({
+            apiUrl: config.wahaApiUrl,
+            apiKey: config.wahaApiKey,
+          })
+        : null,
+      webhookSecret: config.wahaWebhookSecret,
     },
   });
 

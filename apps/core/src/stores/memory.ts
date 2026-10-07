@@ -13,6 +13,8 @@ import type {
   Store,
   TagRecord,
   UserRecord,
+  WahaSessionRecord,
+  WidgetTokenRecord,
   WorkspaceRecord,
   WorkspaceUpdates,
 } from "./store.js";
@@ -35,6 +37,15 @@ export class MemoryStore implements Store {
   readonly conversations = new Map<string, ConversationRecord>();
   readonly messages = new Map<string, MessageRecord>();
   readonly notes = new Map<string, NoteRecord>();
+  readonly widgetTokens = new Map<string, WidgetTokenRecord>();
+  readonly wahaSessions = new Map<string, WahaSessionRecord>();
+  readonly intakeEvents = new Map<string, {
+    workspaceId: string;
+    source: string;
+    externalId: string;
+    conversationId: string | null;
+    messageId: string | null;
+  }>();
 
   private membershipKey(workspaceId: string, userId: string): string {
     return `${workspaceId}:${userId}`;
@@ -252,11 +263,11 @@ export class MemoryStore implements Store {
     );
   }
 
-  async mergeContacts(
+  private assertMergeable(
     workspaceId: string,
     sourceId: string,
     targetId: string,
-  ): Promise<ContactRecord> {
+  ): { source: ContactRecord; target: ContactRecord } {
     const source = this.contacts.get(sourceId);
     const target = this.contacts.get(targetId);
     if (
@@ -268,6 +279,10 @@ export class MemoryStore implements Store {
     ) {
       throw new Error("merge_invalido");
     }
+    return { source, target };
+  }
+
+  private reassignMergeRefs(workspaceId: string, sourceId: string, targetId: string): void {
     for (const ch of this.contactChannels.values()) {
       if (ch.workspaceId === workspaceId && ch.contactId === sourceId) {
         this.contactChannels.set(ch.id, { ...ch, contactId: targetId });
@@ -283,6 +298,15 @@ export class MemoryStore implements Store {
         this.contactEvents.set(ev.id, { ...ev, contactId: targetId });
       }
     }
+  }
+
+  async mergeContacts(
+    workspaceId: string,
+    sourceId: string,
+    targetId: string,
+  ): Promise<ContactRecord> {
+    const { source, target } = this.assertMergeable(workspaceId, sourceId, targetId);
+    this.reassignMergeRefs(workspaceId, sourceId, targetId);
     this.contacts.set(sourceId, { ...source, mergedIntoId: targetId });
     await this.addContactEvent({
       workspaceId,
@@ -411,6 +435,24 @@ export class MemoryStore implements Store {
     return c && c.workspaceId === workspaceId ? c : null;
   }
 
+  private matchesFacets(
+    c: ConversationRecord,
+    filter: { status?: ConversationStatus; assigneeId?: string; tagId?: string } | undefined,
+    taggedIds: Set<string>,
+  ): boolean {
+    if (filter?.status && c.status !== filter.status) return false;
+    if (filter?.assigneeId && c.assigneeId !== filter.assigneeId) return false;
+    if (filter?.tagId && !taggedIds.has(c.id)) return false;
+    return true;
+  }
+
+  private matchesQuery(c: ConversationRecord, q: string | undefined): boolean {
+    if (!q) return true;
+    const contact = this.contacts.get(c.contactId);
+    const hay = `${c.subject ?? ""} ${contact?.name ?? ""}`.toLowerCase();
+    return hay.includes(q);
+  }
+
   async listConversations(
     workspaceId: string,
     filter?: {
@@ -430,15 +472,8 @@ export class MemoryStore implements Store {
     return [...this.conversations.values()]
       .filter((c) => {
         if (c.workspaceId !== workspaceId) return false;
-        if (filter?.status && c.status !== filter.status) return false;
-        if (filter?.assigneeId && c.assigneeId !== filter.assigneeId) return false;
-        if (filter?.tagId && !taggedIds.has(c.id)) return false;
-        if (q) {
-          const contact = this.contacts.get(c.contactId);
-          const hay = `${c.subject ?? ""} ${contact?.name ?? ""}`.toLowerCase();
-          if (!hay.includes(q)) return false;
-        }
-        return true;
+        if (!this.matchesFacets(c, filter, taggedIds)) return false;
+        return this.matchesQuery(c, q);
       })
       .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   }
@@ -550,5 +585,185 @@ export class MemoryStore implements Store {
       (n) => n.workspaceId === workspaceId && n.createdAt > since,
     );
     return { conversations, messages, notes };
+  }
+
+  async createWidgetToken(input: {
+    workspaceId: string;
+    name: string;
+    tokenHash: string;
+  }): Promise<WidgetTokenRecord> {
+    const record: WidgetTokenRecord = {
+      id: randomUUID(),
+      workspaceId: input.workspaceId,
+      name: input.name,
+      tokenHash: input.tokenHash,
+      revokedAt: null,
+      createdAt: now(),
+    };
+    this.widgetTokens.set(record.id, record);
+    return record;
+  }
+
+  async listWidgetTokens(workspaceId: string): Promise<WidgetTokenRecord[]> {
+    return [...this.widgetTokens.values()].filter(
+      (t) => t.workspaceId === workspaceId,
+    );
+  }
+
+  async findWidgetTokenByHash(tokenHash: string): Promise<WidgetTokenRecord | null> {
+    for (const t of this.widgetTokens.values()) {
+      if (t.tokenHash === tokenHash) return t;
+    }
+    return null;
+  }
+
+  async revokeWidgetToken(workspaceId: string, id: string): Promise<boolean> {
+    const t = this.widgetTokens.get(id);
+    if (!t || t.workspaceId !== workspaceId || t.revokedAt) return false;
+    this.widgetTokens.set(id, { ...t, revokedAt: now() });
+    return true;
+  }
+
+  async createWahaSession(input: {
+    workspaceId: string;
+    name: string;
+    engine?: string;
+  }): Promise<WahaSessionRecord> {
+    for (const s of this.wahaSessions.values()) {
+      if (s.name === input.name) throw new Error("session_nome_em_uso");
+    }
+    const record: WahaSessionRecord = {
+      id: randomUUID(),
+      workspaceId: input.workspaceId,
+      name: input.name,
+      engine: input.engine ?? "GOWS",
+      status: "criada",
+      phone: null,
+      createdAt: now(),
+      updatedAt: now(),
+    };
+    this.wahaSessions.set(record.id, record);
+    return record;
+  }
+
+  async listWahaSessions(workspaceId: string): Promise<WahaSessionRecord[]> {
+    return [...this.wahaSessions.values()].filter(
+      (s) => s.workspaceId === workspaceId,
+    );
+  }
+
+  async findWahaSessionById(
+    workspaceId: string,
+    id: string,
+  ): Promise<WahaSessionRecord | null> {
+    const s = this.wahaSessions.get(id);
+    return s && s.workspaceId === workspaceId ? s : null;
+  }
+
+  async findWahaSessionByName(name: string): Promise<WahaSessionRecord | null> {
+    for (const s of this.wahaSessions.values()) {
+      if (s.name === name) return s;
+    }
+    return null;
+  }
+
+  async updateWahaSession(
+    workspaceId: string,
+    id: string,
+    patch: { status?: string; phone?: string | null },
+  ): Promise<WahaSessionRecord | null> {
+    const s = this.wahaSessions.get(id);
+    if (!s || s.workspaceId !== workspaceId) return null;
+    const updated = {
+      ...s,
+      status: patch.status ?? s.status,
+      phone: patch.phone !== undefined ? patch.phone : s.phone,
+      updatedAt: now(),
+    };
+    this.wahaSessions.set(id, updated);
+    return updated;
+  }
+
+  async claimIntakeEvent(input: {
+    workspaceId: string;
+    source: string;
+    externalId: string;
+  }): Promise<boolean> {
+    const key = `${input.workspaceId}:${input.source}:${input.externalId}`;
+    if (this.intakeEvents.has(key)) return false;
+    this.intakeEvents.set(key, {
+      workspaceId: input.workspaceId,
+      source: input.source,
+      externalId: input.externalId,
+      conversationId: null,
+      messageId: null,
+    });
+    return true;
+  }
+
+  async linkIntakeEvent(input: {
+    workspaceId: string;
+    source: string;
+    externalId: string;
+    conversationId: string;
+    messageId: string;
+  }): Promise<void> {
+    const key = `${input.workspaceId}:${input.source}:${input.externalId}`;
+    const event = this.intakeEvents.get(key);
+    if (event) {
+      this.intakeEvents.set(key, {
+        ...event,
+        conversationId: input.conversationId,
+        messageId: input.messageId,
+      });
+    }
+  }
+
+  async findContactByChannel(
+    workspaceId: string,
+    channel: string,
+    value: string,
+  ): Promise<ContactRecord | null> {
+    for (const ch of this.contactChannels.values()) {
+      if (ch.workspaceId !== workspaceId || ch.channel !== channel || ch.value !== value) {
+        continue;
+      }
+      const contact = this.contacts.get(ch.contactId);
+      if (contact && contact.workspaceId === workspaceId && !contact.mergedIntoId) {
+        return contact;
+      }
+    }
+    return null;
+  }
+
+  async findContactByAnyChannelValue(
+    workspaceId: string,
+    value: string,
+  ): Promise<ContactRecord | null> {
+    for (const ch of this.contactChannels.values()) {
+      if (ch.workspaceId !== workspaceId || ch.value !== value) continue;
+      const contact = this.contacts.get(ch.contactId);
+      if (contact && contact.workspaceId === workspaceId && !contact.mergedIntoId) {
+        return contact;
+      }
+    }
+    return null;
+  }
+
+  async findActiveConversation(
+    workspaceId: string,
+    contactId: string,
+    channel: string,
+  ): Promise<ConversationRecord | null> {
+    const candidates = [...this.conversations.values()]
+      .filter(
+        (c) =>
+          c.workspaceId === workspaceId &&
+          c.contactId === contactId &&
+          c.channel === channel &&
+          c.status !== "resolvido",
+      )
+      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+    return candidates[0] ?? null;
   }
 }

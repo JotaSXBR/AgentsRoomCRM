@@ -128,6 +128,34 @@ export interface ContactEventRecord {
   createdAt: string;
 }
 
+export interface WidgetTokenRecord {
+  id: string;
+  workspaceId: string;
+  name: string;
+  tokenHash: string;
+  revokedAt: string | null;
+  createdAt: string;
+}
+
+export type WahaSessionStatus =
+  | "criada"
+  | "qr"
+  | "conectada"
+  | "desconectada"
+  | "erro"
+  | "encerrada";
+
+export interface WahaSessionRecord {
+  id: string;
+  workspaceId: string;
+  name: string;
+  engine: string;
+  status: WahaSessionStatus | string;
+  phone: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 /** Lanche de atualizações para polling fallback. */
 export interface WorkspaceUpdates {
   conversations: ConversationRecord[];
@@ -268,6 +296,64 @@ export interface Store {
 
   /** Polling fallback: tudo atualizado depois de `since` (ISO). */
   listUpdates(workspaceId: string, since: string): Promise<WorkspaceUpdates>;
+
+  // widget tokens
+  createWidgetToken(input: {
+    workspaceId: string;
+    name: string;
+    tokenHash: string;
+  }): Promise<WidgetTokenRecord>;
+  listWidgetTokens(workspaceId: string): Promise<WidgetTokenRecord[]>;
+  findWidgetTokenByHash(tokenHash: string): Promise<WidgetTokenRecord | null>;
+  revokeWidgetToken(workspaceId: string, id: string): Promise<boolean>;
+
+  // sessões WAHA/WhatsApp (1+ por workspace)
+  createWahaSession(input: {
+    workspaceId: string;
+    name: string;
+    engine?: string;
+  }): Promise<WahaSessionRecord>;
+  listWahaSessions(workspaceId: string): Promise<WahaSessionRecord[]>;
+  findWahaSessionById(
+    workspaceId: string,
+    id: string,
+  ): Promise<WahaSessionRecord | null>;
+  findWahaSessionByName(name: string): Promise<WahaSessionRecord | null>;
+  updateWahaSession(
+    workspaceId: string,
+    id: string,
+    patch: { status?: string; phone?: string | null },
+  ): Promise<WahaSessionRecord | null>;
+
+  // intake idempotente
+  claimIntakeEvent(input: {
+    workspaceId: string;
+    source: string;
+    externalId: string;
+  }): Promise<boolean>;
+  linkIntakeEvent(input: {
+    workspaceId: string;
+    source: string;
+    externalId: string;
+    conversationId: string;
+    messageId: string;
+  }): Promise<void>;
+
+  // matching de contato/conversa para o intake unificado
+  findContactByChannel(
+    workspaceId: string,
+    channel: string,
+    value: string,
+  ): Promise<ContactRecord | null>;
+  findContactByAnyChannelValue(
+    workspaceId: string,
+    value: string,
+  ): Promise<ContactRecord | null>;
+  findActiveConversation(
+    workspaceId: string,
+    contactId: string,
+    channel: string,
+  ): Promise<ConversationRecord | null>;
 }
 
 export type { WorkspaceMemberRole, WorkspaceRole };

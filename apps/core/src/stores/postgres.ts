@@ -14,6 +14,8 @@ import type {
   Store,
   TagRecord,
   UserRecord,
+  WahaSessionRecord,
+  WidgetTokenRecord,
   WorkspaceRecord,
   WorkspaceUpdates,
 } from "./store.js";
@@ -852,6 +854,237 @@ export class PostgresStore implements Store {
       return { conversations, messages, notes };
     });
   }
+
+  async createWidgetToken(input: {
+    workspaceId: string;
+    name: string;
+    tokenHash: string;
+  }): Promise<WidgetTokenRecord> {
+    return this.withWorkspace(input.workspaceId, async (client) => {
+      const { rows } = await client.query(
+        `INSERT INTO widget_tokens (workspace_id, name, token_hash)
+         VALUES ($1, $2, $3) RETURNING *`,
+        [input.workspaceId, input.name, input.tokenHash],
+      );
+      const row = rows[0];
+      return {
+        id: String(row.id),
+        workspaceId: String(row.workspace_id),
+        name: String(row.name),
+        tokenHash: String(row.token_hash),
+        revokedAt: row.revoked_at ? new Date(row.revoked_at).toISOString() : null,
+        createdAt: new Date(row.created_at).toISOString(),
+      };
+    });
+  }
+
+  async listWidgetTokens(workspaceId: string): Promise<WidgetTokenRecord[]> {
+    return this.withWorkspace(workspaceId, async (client) => {
+      const { rows } = await client.query(
+        "SELECT * FROM widget_tokens WHERE workspace_id = $1 ORDER BY created_at",
+        [workspaceId],
+      );
+      return rows.map((row) => ({
+        id: String(row.id),
+        workspaceId: String(row.workspace_id),
+        name: String(row.name),
+        tokenHash: String(row.token_hash),
+        revokedAt: row.revoked_at ? new Date(row.revoked_at).toISOString() : null,
+        createdAt: new Date(row.created_at).toISOString(),
+      }));
+    });
+  }
+
+  async findWidgetTokenByHash(tokenHash: string): Promise<WidgetTokenRecord | null> {
+    const { rows } = await this.pool.query(
+      "SELECT * FROM widget_tokens WHERE token_hash = $1",
+      [tokenHash],
+    );
+    if (!rows[0]) return null;
+    const row = rows[0];
+    return {
+      id: String(row.id),
+      workspaceId: String(row.workspace_id),
+      name: String(row.name),
+      tokenHash: String(row.token_hash),
+      revokedAt: row.revoked_at ? new Date(row.revoked_at).toISOString() : null,
+      createdAt: new Date(row.created_at).toISOString(),
+    };
+  }
+
+  async revokeWidgetToken(workspaceId: string, id: string): Promise<boolean> {
+    return this.withWorkspace(workspaceId, async (client) => {
+      const { rowCount } = await client.query(
+        "UPDATE widget_tokens SET revoked_at = NOW() WHERE id = $1 AND workspace_id = $2 AND revoked_at IS NULL",
+        [id, workspaceId],
+      );
+      return (rowCount ?? 0) > 0;
+    });
+  }
+
+  async createWahaSession(input: {
+    workspaceId: string;
+    name: string;
+    engine?: string;
+  }): Promise<WahaSessionRecord> {
+    return this.withWorkspace(input.workspaceId, async (client) => {
+      try {
+        const { rows } = await client.query(
+          `INSERT INTO waha_sessions (workspace_id, name, engine)
+           VALUES ($1, $2, $3) RETURNING *`,
+          [input.workspaceId, input.name, input.engine ?? "GOWS"],
+        );
+        return rowToWahaSession(rows[0]);
+      } catch (error) {
+        if (String((error as Error).message).includes("waha_sessions_name_key")) {
+          throw new Error("session_nome_em_uso");
+        }
+        throw error;
+      }
+    });
+  }
+
+  async listWahaSessions(workspaceId: string): Promise<WahaSessionRecord[]> {
+    return this.withWorkspace(workspaceId, async (client) => {
+      const { rows } = await client.query(
+        "SELECT * FROM waha_sessions WHERE workspace_id = $1 ORDER BY created_at",
+        [workspaceId],
+      );
+      return rows.map(rowToWahaSession);
+    });
+  }
+
+  async findWahaSessionById(
+    workspaceId: string,
+    id: string,
+  ): Promise<WahaSessionRecord | null> {
+    return this.withWorkspace(workspaceId, async (client) => {
+      const { rows } = await client.query(
+        "SELECT * FROM waha_sessions WHERE id = $1 AND workspace_id = $2",
+        [id, workspaceId],
+      );
+      return rows[0] ? rowToWahaSession(rows[0]) : null;
+    });
+  }
+
+  async findWahaSessionByName(name: string): Promise<WahaSessionRecord | null> {
+    const { rows } = await this.pool.query(
+      "SELECT * FROM waha_sessions WHERE name = $1",
+      [name],
+    );
+    return rows[0] ? rowToWahaSession(rows[0]) : null;
+  }
+
+  async updateWahaSession(
+    workspaceId: string,
+    id: string,
+    patch: { status?: string; phone?: string | null },
+  ): Promise<WahaSessionRecord | null> {
+    return this.withWorkspace(workspaceId, async (client) => {
+      const { rows } = await client.query(
+        `UPDATE waha_sessions
+            SET status = COALESCE($3, status),
+                phone = CASE WHEN $4::boolean THEN $5 ELSE phone END,
+                updated_at = NOW()
+          WHERE id = $1 AND workspace_id = $2 RETURNING *`,
+        [id, workspaceId, patch.status ?? null, patch.phone !== undefined, patch.phone ?? null],
+      );
+      return rows[0] ? rowToWahaSession(rows[0]) : null;
+    });
+  }
+
+  async claimIntakeEvent(input: {
+    workspaceId: string;
+    source: string;
+    externalId: string;
+  }): Promise<boolean> {
+    return this.withWorkspace(input.workspaceId, async (client) => {
+      const { rowCount } = await client.query(
+        `INSERT INTO intake_events (workspace_id, source, external_id)
+         VALUES ($1, $2, $3) ON CONFLICT (workspace_id, source, external_id) DO NOTHING`,
+        [input.workspaceId, input.source, input.externalId],
+      );
+      return (rowCount ?? 0) > 0;
+    });
+  }
+
+  async linkIntakeEvent(input: {
+    workspaceId: string;
+    source: string;
+    externalId: string;
+    conversationId: string;
+    messageId: string;
+  }): Promise<void> {
+    await this.withWorkspace(input.workspaceId, async (client) => {
+      await client.query(
+        `UPDATE intake_events SET conversation_id = $4, message_id = $5
+          WHERE workspace_id = $1 AND source = $2 AND external_id = $3`,
+        [input.workspaceId, input.source, input.externalId, input.conversationId, input.messageId],
+      );
+    });
+  }
+
+  async findContactByChannel(
+    workspaceId: string,
+    channel: string,
+    value: string,
+  ): Promise<ContactRecord | null> {
+    return this.withWorkspace(workspaceId, async (client) => {
+      const { rows } = await client.query(
+        `SELECT c.* FROM contacts c
+           JOIN contact_channels ch ON ch.contact_id = c.id AND ch.workspace_id = c.workspace_id
+          WHERE c.workspace_id = $1 AND ch.channel = $2 AND ch.value = $3 AND c.merged_into_id IS NULL
+          ORDER BY c.created_at LIMIT 1`,
+        [workspaceId, channel, value],
+      );
+      return rows[0] ? rowToContact(rows[0]) : null;
+    });
+  }
+
+  async findContactByAnyChannelValue(
+    workspaceId: string,
+    value: string,
+  ): Promise<ContactRecord | null> {
+    return this.withWorkspace(workspaceId, async (client) => {
+      const { rows } = await client.query(
+        `SELECT c.* FROM contacts c
+           JOIN contact_channels ch ON ch.contact_id = c.id AND ch.workspace_id = c.workspace_id
+          WHERE c.workspace_id = $1 AND ch.value = $2 AND c.merged_into_id IS NULL
+          ORDER BY c.created_at LIMIT 1`,
+        [workspaceId, value],
+      );
+      return rows[0] ? rowToContact(rows[0]) : null;
+    });
+  }
+
+  async findActiveConversation(
+    workspaceId: string,
+    contactId: string,
+    channel: string,
+  ): Promise<ConversationRecord | null> {
+    return this.withWorkspace(workspaceId, async (client) => {
+      const { rows } = await client.query(
+        `SELECT * FROM conversations
+          WHERE workspace_id = $1 AND contact_id = $2 AND channel = $3 AND status <> 'resolvido'
+          ORDER BY updated_at DESC LIMIT 1`,
+        [workspaceId, contactId, channel],
+      );
+      return rows[0] ? rowToConversation(rows[0]) : null;
+    });
+  }
+}
+
+function rowToWahaSession(row: Record<string, unknown>): WahaSessionRecord {
+  return {
+    id: String(row.id),
+    workspaceId: String(row.workspace_id),
+    name: String(row.name),
+    engine: String(row.engine),
+    status: String(row.status),
+    phone: (row.phone as string) ?? null,
+    createdAt: new Date(row.created_at as string).toISOString(),
+    updatedAt: new Date(row.updated_at as string).toISOString(),
+  };
 }
 
 export function createPool(databaseUrl: string): Pool {

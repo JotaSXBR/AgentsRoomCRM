@@ -24,6 +24,7 @@ export interface CoreConfig {
   wahaApiUrl: string | null;
   wahaApiKey: string | null;
   wahaDefaultSession: string;
+  wahaWebhookSecret: string | null;
   s3Endpoint: string | null;
   s3Region: string;
   s3AccessKey: string | null;
@@ -33,25 +34,45 @@ export interface CoreConfig {
   ollamaUrl: string | null;
 }
 
-export function loadConfig(env: NodeJS.ProcessEnv = process.env): CoreConfig {
-  const databaseUrl = env.DATABASE_URL ?? null;
+function serverSection(env: NodeJS.ProcessEnv): Pick<CoreConfig, "port" | "host" | "logLevel"> {
   return {
     port: Number(env.PORT ?? 3000),
     host: env.HOST ?? "0.0.0.0",
     logLevel: env.LOG_LEVEL ?? "info",
+  };
+}
+
+function authSection(env: NodeJS.ProcessEnv): Pick<CoreConfig, "jwtSecret" | "jwtExpiresIn" | "ownerEmail" | "ownerPassword" | "ownerName" | "inviteTtlHours"> {
+  return {
     jwtSecret: env.JWT_SECRET ?? "dev-secret-trocar",
     jwtExpiresIn: env.JWT_EXPIRES_IN ?? "12h",
-    databaseUrl,
-    databaseUrlMigrator: env.DATABASE_URL_MIGRATOR ?? databaseUrl,
-    redisUrl: env.REDIS_URL ?? null,
-    storeDriver: env.STORE_DRIVER === "postgres" ? "postgres" : "memory",
     ownerEmail: env.OWNER_EMAIL ?? null,
     ownerPassword: env.OWNER_PASSWORD ?? null,
     ownerName: env.OWNER_NAME ?? "Dono",
     inviteTtlHours: Number(env.INVITE_TTL_HOURS ?? 72),
+  };
+}
+
+function storeSection(env: NodeJS.ProcessEnv, databaseUrl: string | null): Pick<CoreConfig, "databaseUrl" | "databaseUrlMigrator" | "redisUrl" | "storeDriver"> {
+  return {
+    databaseUrl,
+    databaseUrlMigrator: env.DATABASE_URL_MIGRATOR ?? databaseUrl,
+    redisUrl: env.REDIS_URL ?? null,
+    storeDriver: env.STORE_DRIVER === "postgres" ? "postgres" : "memory",
+  };
+}
+
+function wahaSection(env: NodeJS.ProcessEnv): Pick<CoreConfig, "wahaApiUrl" | "wahaApiKey" | "wahaDefaultSession" | "wahaWebhookSecret"> {
+  return {
     wahaApiUrl: env.WAHA_API_URL ?? null,
     wahaApiKey: env.WAHA_API_KEY ?? null,
     wahaDefaultSession: env.WAHA_DEFAULT_SESSION ?? "padrao",
+    wahaWebhookSecret: env.WAHA_WEBHOOK_SECRET ?? null,
+  };
+}
+
+function s3Section(env: NodeJS.ProcessEnv): Pick<CoreConfig, "s3Endpoint" | "s3Region" | "s3AccessKey" | "s3SecretKey" | "s3BucketMidia" | "s3BucketBackups" | "ollamaUrl"> {
+  return {
     s3Endpoint: env.S3_ENDPOINT ?? null,
     s3Region: env.S3_REGION ?? "us-east-1",
     s3AccessKey: env.S3_ACCESS_KEY ?? null,
@@ -59,6 +80,17 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): CoreConfig {
     s3BucketMidia: env.S3_BUCKET_MIDIA ?? "crm-midia",
     s3BucketBackups: env.S3_BUCKET_BACKUPS ?? "crm-backups",
     ollamaUrl: env.OLLAMA_URL ?? null,
+  };
+}
+
+export function loadConfig(env: NodeJS.ProcessEnv = process.env): CoreConfig {
+  const databaseUrl = env.DATABASE_URL ?? null;
+  return {
+    ...serverSection(env),
+    ...authSection(env),
+    ...storeSection(env, databaseUrl),
+    ...wahaSection(env),
+    ...s3Section(env),
   };
 }
 

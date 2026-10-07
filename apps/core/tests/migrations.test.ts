@@ -14,6 +14,9 @@ const TENANT_TABLES = [
   "messages",
   "notes",
   "contact_events",
+  "widget_tokens",
+  "waha_sessions",
+  "intake_events",
 ];
 const ALL_TABLES = ["users", "workspaces", ...TENANT_TABLES];
 

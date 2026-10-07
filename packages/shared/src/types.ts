@@ -68,6 +68,10 @@ export class HttpError extends Error {
     return new HttpError(404, "not_found", message);
   }
 
+  static badGateway(code: string, message: string): HttpError {
+    return new HttpError(502, code, message);
+  }
+
   static conflict(code: string, message: string): HttpError {
     return new HttpError(409, code, message);
   }
