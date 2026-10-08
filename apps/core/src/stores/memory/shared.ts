@@ -4,14 +4,20 @@ import type {
   AiLogRecord,
   AiProviderRecord,
   AiSettingsRecord,
+  ApiKeyRecord,
   BotRuleRecord,
   BotSessionRecord,
   ContactChannelRecord,
+  ContactConsentRecord,
   ContactEventRecord,
   ContactRecord,
+  ConversationRatingRecord,
   ConversationRecord,
   ConversationTagRecord,
+  FlowRecord,
+  FlowStepRecord,
   InviteRecord,
+  LgpdRequestRecord,
   MailboxRecord,
   MembershipRecord,
   MessageRecord,
@@ -23,7 +29,10 @@ import type {
   TagRecord,
   UserRecord,
   WahaSessionRecord,
+  WebhookDeliveryRecord,
+  WebhookEndpointRecord,
   WidgetTokenRecord,
+  WorkspaceModuleRecord,
   WorkspaceRecord,
   WorkspaceSettingsRecord,
 } from "../store.js";
@@ -80,6 +89,15 @@ export interface MemoryState {
   aiSources: Map<string, AiKnowledgeSourceRecord>;
   aiChunks: Map<string, AiKnowledgeChunkRecord>;
   aiLogs: Map<string, AiLogRecord>;
+  apiKeys: Map<string, ApiKeyRecord>;
+  webhookEndpoints: Map<string, WebhookEndpointRecord>;
+  webhookDeliveries: Map<string, WebhookDeliveryRecord>;
+  ratings: Map<string, ConversationRatingRecord>;
+  consents: Map<string, ContactConsentRecord>;
+  lgpdRequests: Map<string, LgpdRequestRecord>;
+  flows: Map<string, FlowRecord>;
+  flowSteps: Map<string, FlowStepRecord>;
+  workspaceModules: Map<string, WorkspaceModuleRecord>;
 }
 
 export function now(): string {

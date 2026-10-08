@@ -105,9 +105,48 @@ describe("coolify: projetos e recursos separados", () => {
       "resources/waha/bootstrap.sh",
       "resources/storage/bootstrap.sh",
       "resources/ollama/pull-models.sh",
+      "resources/postgres/backup.sh",
+      "resources/postgres/restore.sh",
+      "resources/postgres/backup-volumes.sh",
+      "resources/postgres/restore-volumes.sh",
     ]) {
       expect(existsSync(path.join(COOLIFY_DIR, file)), file).toBe(true);
     }
+  });
+
+  /**
+   * F5: backup é pg_dump → RustFS, e o restore é dry-run por padrão.
+   * Um restore que escreve sem confirmação é o pior defeito possível desta
+   * suíte de scripts — por isso o teste afirma o contrário do ingênuo.
+   */
+  it("backup do postgres vai para o RustFS e o restore é seguro por padrão", () => {
+    const backup = read("resources/postgres/backup.sh");
+    expect(backup).toMatch(/pg_dump/);
+    expect(backup).toMatch(/gzip/);
+    expect(backup).toMatch(/BACKUP_BUCKET/);
+    expect(backup).toMatch(/RUSTFS_ACCESS_KEY/);
+    expect(backup).toMatch(/BACKUP_RETENTION_DAYS/);
+
+    const restore = read("resources/postgres/restore.sh");
+    // dry-run é o padrão...
+    expect(restore).toMatch(/APPLY="\$\{APPLY:-0\}"/);
+    expect(restore).toMatch(/dry-run/);
+    // ...e aplicar exige que a confirmação case com o banco alvo.
+    expect(restore).toMatch(/CONFIRM_RESTORE/);
+    expect(restore).toMatch(/!= PGDATABASE=/);
+    // a integridade é verificada antes de qualquer escrita
+    expect(restore).toMatch(/gzip -t/);
+  });
+
+  it("backup de volumes cobre a sessão do WAHA", () => {
+    const script = read("resources/postgres/backup-volumes.sh");
+    expect(script).toMatch(/docker volume inspect/);
+    expect(script).toMatch(/VOLUMES/);
+    const readme = read("resources/postgres/README.md");
+    expect(readme).toMatch(/waha/);
+    // o README precisa ensinar o ensaio de restore em staging (critério F5)
+    expect(readme).toMatch(/APPLY=1/);
+    expect(readme).toMatch(/CONFIRM_RESTORE/);
   });
 
   it("entrypoint do core (migrate automático) referenciado no Dockerfile", () => {

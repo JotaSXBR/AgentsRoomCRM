@@ -4,6 +4,7 @@ import type { BotMenuOption, BotRuleRecord, QueueRecord } from "../stores/store.
 import { isWithinBusinessHours } from "./businessHours.js";
 import { enqueueAndDistribute, pickDefaultQueue } from "../queues/assign.js";
 import { runAiOnIncoming, type AiDeps } from "../ai/orchestrate.js";
+import { runFlowsOnIncoming } from "../modules/flows.js";
 
 export interface BotInput {
   workspaceId: string;
@@ -221,6 +222,17 @@ export async function runBotOnIncoming(
 
   const queues = await store.listQueues(input.workspaceId);
   const handled = await runActiveRules({ store, hub, input, rules, queues });
+  if (!handled) {
+    // F5: fluxos (montados por um agente externo via MCP) têm a vez antes da
+    // IA — são configuração determinística, a IA é o último recurso.
+    const flowRun = await runFlowsOnIncoming({ store, hub }, {
+      workspaceId: input.workspaceId,
+      conversationId: input.conversationId,
+      channel: input.channel,
+      text: input.text,
+    });
+    if (flowRun) return;
+  }
   // F4: sem regra casada, IA híbrida (RAG + BYOK/Ollama) com fallback humano.
   if (!handled && ai) {
     await runAiOnIncoming(store, hub, ai, {

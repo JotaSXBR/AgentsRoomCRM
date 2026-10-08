@@ -1,12 +1,14 @@
 import { Pool, type PoolClient } from "pg";
 import { setWorkspaceContextSql } from "@agentsroom/db";
 import type {
+  ApiKeyScope,
   BotMenuOption,
   BotRuleKind,
   BotRuleRecord,
   BotSessionRecord,
   BotSessionState,
   BusinessHours,
+  ConsentKind,
   ContactChannelRecord,
   ContactEventRecord,
   ContactRecord,
@@ -15,6 +17,7 @@ import type {
   InviteRecord,
   MailboxRecord,
   MembershipRecord,
+  FlowAction,
   MemberWithUser,
   MessageRecord,
   MetaConnectionRecord,
@@ -22,11 +25,13 @@ import type {
   OutboundRecord,
   QueueRecord,
   QueueTicketRecord,
+  RatingSource,
   Store,
   TagRecord,
   TicketStatus,
   UserRecord,
   WahaSessionRecord,
+  WebhookDeliveryStatus,
   WidgetTokenRecord,
   WorkspaceRecord,
   WorkspaceSettingsRecord,
@@ -34,6 +39,9 @@ import type {
 } from "./store.js";
 import * as botOps from "./postgres/bot.js";
 import * as aiOps from "./postgres/ai.js";
+import * as f5Ops from "./postgres/f5.js";
+import * as f5LgpdOps from "./postgres/f5lgpd.js";
+import * as f5FlowsOps from "./postgres/f5flows.js";
 import * as contactsOps from "./postgres/contacts.js";
 import * as identityOps from "./postgres/identity.js";
 import * as inboxOps from "./postgres/inbox.js";
@@ -191,7 +199,35 @@ export class PostgresStore implements Store {
   async listKnowledgeChunks(workspaceId: string) { return aiOps.listKnowledgeChunks(this.deps, workspaceId); }
   async addAiLog(input: Parameters<typeof aiOps.addAiLog>[1]) { return aiOps.addAiLog(this.deps, input); }
   async listAiLogs(workspaceId: string, limit?: number) { return aiOps.listAiLogs(this.deps, workspaceId, limit); }
-
+  // ---- F5: API pública, webhooks, CSAT, LGPD, fluxos e módulos ----
+  async createApiKey(input: { workspaceId: string; name: string; prefix: string; keyHash: string; scopes?: ApiKeyScope[]; createdBy?: string | null }) { return f5Ops.createApiKey(this.deps, input); }
+  async listApiKeys(workspaceId: string) { return f5Ops.listApiKeys(this.deps, workspaceId); }
+  async findApiKeyByHash(keyHash: string) { return f5Ops.findApiKeyByHash(this.deps, keyHash); }
+  async touchApiKey(workspaceId: string, id: string) { return f5Ops.touchApiKey(this.deps, workspaceId, id); }
+  async revokeApiKey(workspaceId: string, id: string) { return f5Ops.revokeApiKey(this.deps, workspaceId, id); }
+  async createWebhookEndpoint(input: { workspaceId: string; name: string; url: string; secret: string; events?: string[] }) { return f5Ops.createWebhookEndpoint(this.deps, input); }
+  async listWebhookEndpoints(workspaceId: string) { return f5Ops.listWebhookEndpoints(this.deps, workspaceId); }
+  async findWebhookEndpoint(workspaceId: string, id: string) { return f5Ops.findWebhookEndpoint(this.deps, workspaceId, id); }
+  async deleteWebhookEndpoint(workspaceId: string, id: string) { return f5Ops.deleteWebhookEndpoint(this.deps, workspaceId, id); }
+  async enqueueWebhookDelivery(input: { workspaceId: string; endpointId: string; event: string; payload: Record<string, unknown>; nextAttemptAt?: string }) { return f5Ops.enqueueWebhookDelivery(this.deps, input); }
+  async listWebhookDeliveries(workspaceId: string, filter?: { endpointId?: string; status?: WebhookDeliveryStatus }) { return f5Ops.listWebhookDeliveries(this.deps, workspaceId, filter); }
+  async markWebhookDelivery(workspaceId: string, id: string, patch: { status?: WebhookDeliveryStatus; attempts?: number; nextAttemptAt?: string; responseCode?: number | null; lastError?: string | null }) { return f5Ops.markWebhookDelivery(this.deps, workspaceId, id, patch); }
+  async rateConversation(input: { workspaceId: string; conversationId: string; score: number; comment?: string | null; source?: RatingSource; ratedBy?: string | null }) { return f5LgpdOps.rateConversation(this.deps, input); }
+  async findRating(workspaceId: string, conversationId: string) { return f5LgpdOps.findRating(this.deps, workspaceId, conversationId); }
+  async listRatings(workspaceId: string, options?: { conversationIds?: string[] }) { return f5LgpdOps.listRatings(this.deps, workspaceId, options); }
+  async setConsent(input: { workspaceId: string; contactId: string; kind: ConsentKind; granted: boolean; source?: string; note?: string | null }) { return f5LgpdOps.setConsent(this.deps, input); }
+  async listConsents(workspaceId: string, filter?: { contactId?: string; kind?: ConsentKind }) { return f5LgpdOps.listConsents(this.deps, workspaceId, filter); }
+  async addLgpdRequest(input: { workspaceId: string; contactId?: string | null; scope: "contato" | "workspace"; action: "acesso" | "exclusao"; status?: "concluido" | "parcial"; summary: Record<string, unknown>; requestedBy?: string | null }) { return f5LgpdOps.addLgpdRequest(this.deps, input); }
+  async listLgpdRequests(workspaceId: string) { return f5LgpdOps.listLgpdRequests(this.deps, workspaceId); }
+  async purgeContactData(workspaceId: string, contactId: string) { return f5LgpdOps.purgeContactData(this.deps, workspaceId, contactId); }
+  async purgeWorkspaceContacts(workspaceId: string) { return f5LgpdOps.purgeWorkspaceContacts(this.deps, workspaceId); }
+  async createFlow(input: { workspaceId: string; name: string; terms?: string[]; active?: boolean; steps: Array<{ action: FlowAction; payload: Record<string, unknown> }> }) { return f5FlowsOps.createFlow(this.deps, input); }
+  async listFlows(workspaceId: string) { return f5FlowsOps.listFlows(this.deps, workspaceId); }
+  async findFlowById(workspaceId: string, id: string) { return f5FlowsOps.findFlowById(this.deps, workspaceId, id); }
+  async setFlowActive(workspaceId: string, id: string, active: boolean) { return f5FlowsOps.setFlowActive(this.deps, workspaceId, id, active); }
+  async deleteFlow(workspaceId: string, id: string) { return f5FlowsOps.deleteFlow(this.deps, workspaceId, id); }
+  async listWorkspaceModules(workspaceId: string) { return f5FlowsOps.listWorkspaceModules(this.deps, workspaceId); }
+  async setWorkspaceModule(input: { workspaceId: string; moduleKey: string; enabled?: boolean; config?: Record<string, unknown> }) { return f5FlowsOps.setWorkspaceModule(this.deps, input); }
 }
 
 export function createPool(databaseUrl: string): Pool {

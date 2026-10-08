@@ -30,6 +30,12 @@ import type { WhatsAppAdapter } from "./waha/adapter.js";
 import type { MetaAdapter } from "./meta/adapter.js";
 import type { MailReceiver, MailSender } from "./mail/transport.js";
 import { aiRoutes } from "./routes/ai.js";
+import { mcpRoutes } from "./routes/mcp.js";
+import { publicCatalogRoutes } from "./routes/integrations.js";
+import { registerApiKeyAuth } from "./api/authApiKey.js";
+import { createModuleRegistry } from "./modules/registry.js";
+import { F5_MODULES } from "./modules/index.js";
+import { emitWebhookEvent } from "./webhooks/dispatcher.js";
 import type { AiDeps } from "./ai/orchestrate.js";
 
 export interface BuildAppOptions {
@@ -71,6 +77,10 @@ export interface BuildAppOptions {
     chatCaller?: AiDeps["chatCaller"];
     secretsKey?: string | null;
   };
+  /** Módulos extras (F5): qualquer `CrmModule` registrado aqui traz rotas + tools MCP. */
+  modules?: Parameters<typeof createModuleRegistry>[0];
+  /** Fetch injetável das entregas de webhook (testes). */
+  webhookFetch?: typeof fetch;
 }
 
 function defaultS3Options(): NonNullable<BuildAppOptions["s3"]> {
@@ -107,6 +117,49 @@ async function registerCoreRoutes(
   await botRoutes(app, options.store);
   await metricsRoutes(app, options.store);
   await aiRoutes(app, options.store, { secretsKey: resolveSecretsKey(options) });
+  await registerModuleRoutes(app, options, hub);
+}
+
+/**
+ * F5: servidor MCP (autenticado por chave de API) + catálogo da API pública +
+ * as rotas dos módulos extensíveis. O registro de módulos é a peça que permite
+ * adicionar uma capacidade nova sem tocar no `app.ts`.
+ */
+async function registerModuleRoutes(
+  app: FastifyInstance,
+  options: BuildAppOptions,
+  hub: RealtimeHub,
+): Promise<void> {
+  const registry = createModuleRegistry(options.modules ?? F5_MODULES);
+  await registerApiKeyAuth(app, options.store);
+  await mcpRoutes(app, options.store, { tools: registry.toolList() });
+  await publicCatalogRoutes(app);
+  for (const module of registry.modules) {
+    if (module.routes) await module.routes({ app, store: options.store });
+  }
+  bridgeEventsToWebhooks(options, hub);
+}
+
+/**
+ * Espelha os eventos do realtime nas filas de webhook do workspace. É o que
+ * faz "criar um webhook" significar algo sem instrumentar rota por rota: todo
+ * evento publicado no hub vira entrega para os endpoints inscritos.
+ */
+function bridgeEventsToWebhooks(options: BuildAppOptions, hub: RealtimeHub): void {
+  // `fetchImpl` opcional: sem injeção, o despachante usa o `fetch` global.
+  const deps = {
+    store: options.store,
+    ...(options.webhookFetch ? { fetchImpl: options.webhookFetch } : {}),
+  };
+  hub.subscribeAll((event) => {
+    // `data` é `unknown` no contrato do realtime; o payload do webhook é um
+    // objeto, então Anything que não seja objeto vira `{ valor }`.
+    const data =
+      typeof event.data === "object" && event.data !== null && !Array.isArray(event.data)
+        ? (event.data as Record<string, unknown>)
+        : { valor: event.data };
+    void emitWebhookEvent(deps, event.workspaceId, event.kind, data).catch(() => null);
+  });
 }
 
 function resolveSecretsKey(options: BuildAppOptions): string {

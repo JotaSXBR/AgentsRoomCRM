@@ -15,6 +15,15 @@ import type { QueueTicketsStore, QueuesStore } from "./types/queues.js";
 import type { WahaSessionsStore } from "./types/waha.js";
 import type { WidgetTokensStore } from "./types/widget.js";
 import type { AiStore } from "./types/ai.js";
+import type {
+  ApiKeysStore,
+  ConsentsStore,
+  FlowsStore,
+  LgpdStore,
+  ModulesStore,
+  RatingsStore,
+  WebhooksStore,
+} from "./types/f5.js";
 
 /**
  * Contrato de persistência do core (F0).
@@ -42,7 +51,15 @@ export interface Store
     QueuesStore,
     QueueTicketsStore,
     BotStore,
-    AiStore {}
+    AiStore,
+    // F5
+    ApiKeysStore,
+    WebhooksStore,
+    RatingsStore,
+    ConsentsStore,
+    LgpdStore,
+    FlowsStore,
+    ModulesStore {}
 
 export type {
   AuthUser,
@@ -87,6 +104,22 @@ export type {
   BusinessHours,
   WorkspaceSettingsRecord,
 } from "./types/bot.js";
+export type {
+  ApiKeyRecord,
+  ApiKeyScope,
+  ConsentKind,
+  ContactConsentRecord,
+  ConversationRatingRecord,
+  FlowAction,
+  FlowRecord,
+  FlowStepRecord,
+  LgpdRequestRecord,
+  RatingSource,
+  WebhookDeliveryRecord,
+  WebhookDeliveryStatus,
+  WebhookEndpointRecord,
+  WorkspaceModuleRecord,
+} from "./types/f5.js";
 export type {
   AiKnowledgeChunkRecord,
   AiKnowledgeKind,

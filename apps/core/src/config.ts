@@ -37,6 +37,11 @@ export interface CoreConfig {
   outboundMaxDelayMs: number;
   outboundTickMs: number;
   mailSyncIntervalMs: number;
+  /** F5 — entrega de webhooks de saída (0 = desligado). */
+  webhookTickMs: number;
+  webhookMaxAttempts: number;
+  webhookBaseDelayMs: number;
+  webhookMaxDelayMs: number;
   s3Endpoint: string | null;
   s3Region: string;
   s3AccessKey: string | null;
@@ -97,6 +102,10 @@ function metaSection(
   | "outboundMaxDelayMs"
   | "outboundTickMs"
   | "mailSyncIntervalMs"
+  | "webhookTickMs"
+  | "webhookMaxAttempts"
+  | "webhookBaseDelayMs"
+  | "webhookMaxDelayMs"
 > {
   return {
     metaAppId: env.META_APP_ID ?? null,
@@ -109,6 +118,11 @@ function metaSection(
     outboundMaxDelayMs: Number(env.OUTBOUND_MAX_DELAY_MS ?? 3_600_000),
     outboundTickMs: Number(env.OUTBOUND_TICK_MS ?? 0),
     mailSyncIntervalMs: Number(env.MAIL_SYNC_INTERVAL_MS ?? 0),
+    // F5: webhooks de saída (entrega + retry com backoff).
+    webhookTickMs: Number(env.WEBHOOK_TICK_MS ?? 15_000),
+    webhookMaxAttempts: Number(env.WEBHOOK_MAX_ATTEMPTS ?? 5),
+    webhookBaseDelayMs: Number(env.WEBHOOK_BASE_DELAY_MS ?? 30_000),
+    webhookMaxDelayMs: Number(env.WEBHOOK_MAX_DELAY_MS ?? 3_600_000),
   };
 }
 

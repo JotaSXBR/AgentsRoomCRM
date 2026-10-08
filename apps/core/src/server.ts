@@ -8,6 +8,7 @@ import { createMetaHttpAdapter } from "./meta/metaHttpAdapter.js";
 import { createSmtpSender } from "./mail/smtpSender.js";
 import { createImapReceiver } from "./mail/imapReceiver.js";
 import { processAllWorkspaces } from "./outbound/queue.js";
+import { deliverAllWorkspaces } from "./webhooks/dispatcher.js";
 import { buildWorkspaceSender } from "./outbound/sender.js";
 import { syncAllMailboxes } from "./mail/sync.js";
 import type { Store } from "./stores/store.js";
@@ -40,6 +41,26 @@ function startMailSyncTicker(
   }, options.intervalMs);
   timer.unref?.();
   console.log(`[core] polling IMAP a cada ${options.intervalMs}ms.`);
+}
+
+/**
+ * F5: consome as entregas de webhook pendentes de todos os workspaces.
+ * Sem este ticker, `webhook_deliveries` só cresce — os eventos são enfileirados
+ * pelo espelhamento no hub, mas ninguém os entrega.
+ */
+function startWebhookTicker(
+  store: Store,
+  tickMs: number,
+  options: { maxAttempts: number; baseDelayMs: number; maxDelayMs: number },
+): void {
+  if (!tickMs || tickMs <= 0) return;
+  const timer = setInterval(() => {
+    deliverAllWorkspaces({ store }, options).catch((error) => {
+      console.error("[core] webhook tick falhou:", (error as Error).message);
+    });
+  }, tickMs);
+  timer.unref?.();
+  console.log(`[core] entrega de webhooks a cada ${tickMs}ms.`);
 }
 
 async function main(): Promise<void> {
@@ -144,6 +165,11 @@ async function main(): Promise<void> {
     receiver: mailReceiver,
     secretsKey: config.jwtSecret,
     ai: { secretsKey: config.jwtSecret },
+  });
+  startWebhookTicker(store, config.webhookTickMs, {
+    maxAttempts: config.webhookMaxAttempts,
+    baseDelayMs: config.webhookBaseDelayMs,
+    maxDelayMs: config.webhookMaxDelayMs,
   });
 
   const shutdown = async (): Promise<void> => {
