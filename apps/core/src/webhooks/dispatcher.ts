@@ -97,21 +97,27 @@ async function deliver(
       });
       return true;
     }
-    await failOrRetry(deps, endpoint, delivery, attempts, `HTTP ${response.status}`);
+    await failOrRetry(deps, endpoint, delivery, { attempts, reason: `HTTP ${response.status}` });
     return false;
   } catch (error) {
-    await failOrRetry(deps, endpoint, delivery, attempts, (error as Error).message);
+    await failOrRetry(deps, endpoint, delivery, { attempts, reason: (error as Error).message });
     return false;
   }
+}
+
+/** Desfecho de uma tentativa de entrega (objeto único para caber no orçamento de parâmetros). */
+interface AttemptOutcome {
+  attempts: number;
+  reason: string;
 }
 
 async function failOrRetry(
   deps: WebhookDispatcherDeps,
   endpoint: WebhookEndpointRecord,
   delivery: WebhookDeliveryRecord,
-  attempts: number,
-  reason: string,
+  outcome: AttemptOutcome,
 ): Promise<void> {
+  const { attempts, reason } = outcome;
   const maxAttempts = deps.maxAttempts ?? 5;
   if (attempts >= maxAttempts) {
     await deps.store.markWebhookDelivery(endpoint.workspaceId, delivery.id, {

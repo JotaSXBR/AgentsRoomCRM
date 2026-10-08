@@ -21,14 +21,19 @@ const CONTACT_TABLES = {
   contact_events: "eventos_removidos",
 } as const;
 
+/** Alvo da contagem de linhas na limpeza LGPD (objeto único para caber no orçamento de parâmetros). */
+interface CountTarget {
+  table: string;
+  column: string;
+  workspaceId: string;
+  ids: string[];
+}
+
 async function countRows(
   client: PoolClient,
-  table: string,
-  column: string,
-  workspaceId: string,
-  ids: string[],
+  target: CountTarget,
 ): Promise<number> {
-  const { rows } = await client.query(
+  const { table, column, workspaceId, ids } = target;  const { rows } = await client.query(
     `SELECT COUNT(*)::int AS n FROM ${table} WHERE workspace_id = $1 AND ${column} = ANY($2::uuid[])`,
     [workspaceId, ids],
   );
@@ -64,7 +69,7 @@ async function purgeOne(
   const conversationIds = conv.map((c) => String(c.id));
   const counters: Record<string, number> = { conversas_removidas: conversationIds.length };
   for (const [table, counter] of Object.entries(CONVERSATION_TABLES)) {
-    counters[counter] = await countRows(client, table, "conversation_id", workspaceId, conversationIds);
+    counters[counter] = await countRows(client, { table, column: "conversation_id", workspaceId, ids: conversationIds });
   }
   for (const [table, counter] of Object.entries(CONTACT_TABLES)) {
     counters[counter] = await countContactRows(client, table, workspaceId, contactId);

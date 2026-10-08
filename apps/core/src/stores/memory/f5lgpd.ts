@@ -103,6 +103,45 @@ function consentKey(contactId: string, kind: string): string {
   return `${contactId}:${kind}`;
 }
 
+/** Carimbos de concessão/revogação do consentimento. */
+function consentStamps(
+  current: ContactConsentRecord | undefined,
+  granted: boolean,
+  timestamp: string,
+): { grantedAt: string | null; revokedAt: string | null } {
+  if (granted) return { grantedAt: timestamp, revokedAt: null };
+  return { grantedAt: current?.grantedAt ?? null, revokedAt: timestamp };
+}
+
+/** Monta o registro de consentimento preservando id, origem, nota e criação. */
+function buildConsentRecord(
+  current: ContactConsentRecord | undefined,
+  input: {
+    workspaceId: string;
+    contactId: string;
+    kind: ContactConsentRecord["kind"];
+    granted: boolean;
+    source?: string;
+    note?: string | null;
+  },
+  timestamp: string,
+): ContactConsentRecord {
+  const { grantedAt, revokedAt } = consentStamps(current, input.granted, timestamp);
+  return {
+    id: current?.id ?? randomUUID(),
+    workspaceId: input.workspaceId,
+    contactId: input.contactId,
+    kind: input.kind,
+    granted: input.granted,
+    source: input.source ?? current?.source ?? "manual",
+    note: input.note ?? current?.note ?? null,
+    grantedAt,
+    revokedAt,
+    createdAt: current?.createdAt ?? timestamp,
+    updatedAt: timestamp,
+  };
+}
+
 /** Grava/revoga o consentimento por finalidade, carimbando granted/revoked_at. */
 export async function setConsent(
   state: F5LgpdState,
@@ -118,21 +157,7 @@ export async function setConsent(
   const contact = state.contacts.get(input.contactId);
   if (!contact || contact.workspaceId !== input.workspaceId) throw new Error("contato_invalido");
   const key = consentKey(input.contactId, input.kind);
-  const current = state.consents.get(key);
-  const timestamp = now();
-  const record: ContactConsentRecord = {
-    id: current?.id ?? randomUUID(),
-    workspaceId: input.workspaceId,
-    contactId: input.contactId,
-    kind: input.kind,
-    granted: input.granted,
-    source: input.source ?? current?.source ?? "manual",
-    note: input.note ?? current?.note ?? null,
-    grantedAt: input.granted ? timestamp : (current?.grantedAt ?? null),
-    revokedAt: input.granted ? null : timestamp,
-    createdAt: current?.createdAt ?? timestamp,
-    updatedAt: timestamp,
-  };
+  const record = buildConsentRecord(state.consents.get(key), input, now());
   state.consents.set(key, record);
   return record;
 }

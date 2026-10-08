@@ -61,12 +61,12 @@ export async function registerIntegrationsRoutes(
     const { workspaceId } = request.params as Params;
     assertSupervisor(await requireWorkspace(store, request, workspaceId));
     const body = createKeySchema.parse(await request.body);
-    const created = await createKeyRecord(
+    const created = await createKeyRecord({
       store,
       workspaceId,
-      body.name,
-      body.scopes as ApiKeyScope[],
-    );
+      name: body.name,
+      scopes: body.scopes as ApiKeyScope[],
+    });
     return reply.code(201).send(created);
   });
 

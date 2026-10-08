@@ -59,13 +59,19 @@ async function runResponder(
   publish(deps, workspaceId, { kind: "mensagem.criada", data: message });
 }
 
+/** Contexto de um passo de fluxo (objeto único para caber no orçamento de parâmetros). */
+interface FlowStepCtx {
+  deps: FlowRunDeps;
+  workspaceId: string;
+  conversationId: string;
+  channel: string;
+  step: FlowStepRecord;
+}
+
 async function runEnfileirar(
-  deps: FlowRunDeps,
-  workspaceId: string,
-  conversationId: string,
-  channel: string,
-  step: FlowStepRecord,
+  ctx: FlowStepCtx,
 ): Promise<void> {
+  const { deps, workspaceId, conversationId, channel, step } = ctx;
   const queueId = textOf(step.payload, "queueId");
   if (!queueId) return;
   const existing = await deps.store.findOpenTicketByConversation(workspaceId, conversationId);
@@ -112,19 +118,16 @@ async function runMenu(
 }
 
 async function runStep(
-  deps: FlowRunDeps,
-  workspaceId: string,
-  conversationId: string,
-  channel: string,
-  step: FlowStepRecord,
+  ctx: FlowStepCtx,
 ): Promise<void> {
+  const { deps, workspaceId, conversationId, channel, step } = ctx;
   switch (step.action) {
     case "responder":
       return runResponder(deps, workspaceId, conversationId, step);
     case "menu":
       return runMenu(deps, workspaceId, conversationId, step);
     case "enfileirar":
-      return runEnfileirar(deps, workspaceId, conversationId, channel, step);
+      return runEnfileirar({ deps, workspaceId, conversationId, channel, step });
     case "encerrar":
       return runEncerrar(deps, workspaceId, conversationId);
   }
@@ -149,7 +152,7 @@ export async function runFlowsOnIncoming(
   // quem configurou.
   const chosen = candidates[0];
   for (const step of chosen.flow.steps) {
-    await runStep(deps, input.workspaceId, input.conversationId, input.channel, step);
+    await runStep({ deps, workspaceId: input.workspaceId, conversationId: input.conversationId, channel: input.channel, step });
   }
   publish(deps, input.workspaceId, {
     kind: "fluxo.executado",

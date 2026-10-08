@@ -18,14 +18,20 @@ export async function resolveQueueId(
   return created.id;
 }
 
+/** Entrada da emissão de chave de API (objeto único para caber no orçamento de parâmetros). */
+export interface CreateKeyInput {
+  store: Store;
+  workspaceId: string;
+  name: string;
+  scopes: string[];
+  createdBy?: string | null;
+}
+
 /** Cria a chave de API e devolve o segredo UMA única vez. */
 export async function createKeyRecord(
-  store: Store,
-  workspaceId: string,
-  name: string,
-  scopes: string[],
-  createdBy: string | null = null,
+  input: CreateKeyInput,
 ): Promise<Record<string, unknown>> {
+  const { store, workspaceId, name, scopes, createdBy = null } = input;
   const generated = generateApiKey();
   const record = await store.createApiKey({
     workspaceId,

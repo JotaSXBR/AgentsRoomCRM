@@ -88,6 +88,62 @@ function wahaSection(env: NodeJS.ProcessEnv): Pick<CoreConfig, "wahaApiUrl" | "w
   };
 }
 
+function metaConnectionSection(
+  env: NodeJS.ProcessEnv,
+): Pick<
+  CoreConfig,
+  | "metaAppId"
+  | "metaAppSecret"
+  | "metaVerifyToken"
+  | "metaRedirectUri"
+  | "metaApiVersion"
+> {
+  return {
+    metaAppId: env.META_APP_ID ?? null,
+    metaAppSecret: env.META_APP_SECRET ?? null,
+    metaVerifyToken: env.META_VERIFY_TOKEN ?? null,
+    metaRedirectUri: env.META_REDIRECT_URI ?? null,
+    metaApiVersion: env.META_API_VERSION ?? "v21.0",
+  };
+}
+
+function outboundSection(
+  env: NodeJS.ProcessEnv,
+): Pick<
+  CoreConfig,
+  | "outboundMaxAttempts"
+  | "outboundBaseDelayMs"
+  | "outboundMaxDelayMs"
+  | "outboundTickMs"
+  | "mailSyncIntervalMs"
+> {
+  return {
+    outboundMaxAttempts: Number(env.OUTBOUND_MAX_ATTEMPTS ?? 8),
+    outboundBaseDelayMs: Number(env.OUTBOUND_BASE_DELAY_MS ?? 30_000),
+    outboundMaxDelayMs: Number(env.OUTBOUND_MAX_DELAY_MS ?? 3_600_000),
+    outboundTickMs: Number(env.OUTBOUND_TICK_MS ?? 0),
+    mailSyncIntervalMs: Number(env.MAIL_SYNC_INTERVAL_MS ?? 0),
+  };
+}
+
+function webhookSection(
+  env: NodeJS.ProcessEnv,
+): Pick<
+  CoreConfig,
+  | "webhookTickMs"
+  | "webhookMaxAttempts"
+  | "webhookBaseDelayMs"
+  | "webhookMaxDelayMs"
+> {
+  return {
+    // F5: webhooks de saída (entrega + retry com backoff).
+    webhookTickMs: Number(env.WEBHOOK_TICK_MS ?? 15_000),
+    webhookMaxAttempts: Number(env.WEBHOOK_MAX_ATTEMPTS ?? 5),
+    webhookBaseDelayMs: Number(env.WEBHOOK_BASE_DELAY_MS ?? 30_000),
+    webhookMaxDelayMs: Number(env.WEBHOOK_MAX_DELAY_MS ?? 3_600_000),
+  };
+}
+
 function metaSection(
   env: NodeJS.ProcessEnv,
 ): Pick<
@@ -108,21 +164,9 @@ function metaSection(
   | "webhookMaxDelayMs"
 > {
   return {
-    metaAppId: env.META_APP_ID ?? null,
-    metaAppSecret: env.META_APP_SECRET ?? null,
-    metaVerifyToken: env.META_VERIFY_TOKEN ?? null,
-    metaRedirectUri: env.META_REDIRECT_URI ?? null,
-    metaApiVersion: env.META_API_VERSION ?? "v21.0",
-    outboundMaxAttempts: Number(env.OUTBOUND_MAX_ATTEMPTS ?? 8),
-    outboundBaseDelayMs: Number(env.OUTBOUND_BASE_DELAY_MS ?? 30_000),
-    outboundMaxDelayMs: Number(env.OUTBOUND_MAX_DELAY_MS ?? 3_600_000),
-    outboundTickMs: Number(env.OUTBOUND_TICK_MS ?? 0),
-    mailSyncIntervalMs: Number(env.MAIL_SYNC_INTERVAL_MS ?? 0),
-    // F5: webhooks de saída (entrega + retry com backoff).
-    webhookTickMs: Number(env.WEBHOOK_TICK_MS ?? 15_000),
-    webhookMaxAttempts: Number(env.WEBHOOK_MAX_ATTEMPTS ?? 5),
-    webhookBaseDelayMs: Number(env.WEBHOOK_BASE_DELAY_MS ?? 30_000),
-    webhookMaxDelayMs: Number(env.WEBHOOK_MAX_DELAY_MS ?? 3_600_000),
+    ...metaConnectionSection(env),
+    ...outboundSection(env),
+    ...webhookSection(env),
   };
 }
 

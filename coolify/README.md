@@ -59,12 +59,11 @@ Desenvolvimento local (tudo de uma vez, fora do Coolify):
 4. `storage/bootstrap.sh` (buckets), `waha/bootstrap.sh` (sessão + QR).
 5. Checar `GET /health` e `GET /ready` do core.
 
-## Limites F0 (vão para F1)
+## Desde a F0 (já entregue nas fases seguintes)
 
-- Webhook `waha` → core (`POST /webhooks/waha` ainda não existe).
-- Cliente S3 e chamadas ao Ollama no core (contrato `S3_*`/`WAHA_*`/`OLLAMA_*`
-  já reservado no `.env.example`).
-- Sessões do WAHA ficam em volume local (ir para Postgres só faria sentido
+- Webhook `waha` → core: existe (`POST /webhooks/waha`, F2a).
+- Cliente S3 e chamadas ao Ollama no core: existem (presign F1, IA F4).
+- Sessões do WAHA seguem em volume local (ir para Postgres só faria sentido
   por backup centralizado/multi-instância — sem motivo no momento).
 - Réplicas do core > 1 exigem migrate fora do boot.
 

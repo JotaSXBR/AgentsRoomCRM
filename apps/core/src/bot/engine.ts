@@ -1,6 +1,11 @@
 import type { Store } from "../stores/store.js";
 import type { RealtimeHub } from "../realtime/hub.js";
-import type { BotMenuOption, BotRuleRecord, QueueRecord } from "../stores/store.js";
+import type {
+  BotMenuOption,
+  BotRuleRecord,
+  BotSessionRecord,
+  QueueRecord,
+} from "../stores/store.js";
 import { isWithinBusinessHours } from "./businessHours.js";
 import { enqueueAndDistribute, pickDefaultQueue } from "../queues/assign.js";
 import { runAiOnIncoming, type AiDeps } from "../ai/orchestrate.js";
@@ -196,6 +201,52 @@ async function runActiveRules(ctx: ActiveRulesCtx): Promise<boolean> {
  * - Menu pendente na sessão → próximo texto escolhe a opção.
  * - Senão → primeira regra ativa (por prioridade) cujo termo aparece na mensagem.
  */
+async function handleMenuSession(
+  ctx: BotCtx,
+  rules: BotRuleRecord[],
+  session: BotSessionRecord | null,
+): Promise<boolean> {
+  const menuRuleId = session?.state?.menuRuleId;
+  if (!menuRuleId) return false;
+  const { store, hub, input } = ctx;
+  const menuRule = rules.find((r) => r.id === menuRuleId && r.active && r.kind === "menu");
+  const queues = await store.listQueues(input.workspaceId);
+  if (menuRule && (await handlePendingMenu({ store, hub, input, rule: menuRule, queues }))) {
+    return true;
+  }
+  await store.setBotSession({
+    workspaceId: input.workspaceId,
+    conversationId: input.conversationId,
+    state: {},
+  });
+  return false;
+}
+
+async function runFlowFallback(ctx: BotCtx): Promise<boolean> {
+  const { store, hub, input } = ctx;
+  // F5: fluxos (montados por um agente externo via MCP) têm a vez antes da
+  // IA — são configuração determinística, a IA é o último recurso.
+  const flowRun = await runFlowsOnIncoming({ store, hub }, {
+    workspaceId: input.workspaceId,
+    conversationId: input.conversationId,
+    channel: input.channel,
+    text: input.text,
+  });
+  return flowRun !== null;
+}
+
+async function runAiFallback(ctx: BotCtx, ai?: AiDeps): Promise<void> {
+  if (!ai) return;
+  // F4: sem regra casada, IA híbrida (RAG + BYOK/Ollama) com fallback humano.
+  const { store, hub, input } = ctx;
+  await runAiOnIncoming(store, hub, ai, {
+    workspaceId: input.workspaceId,
+    conversationId: input.conversationId,
+    channel: input.channel,
+    text: input.text,
+  });
+}
+
 export async function runBotOnIncoming(
   store: Store,
   hub: RealtimeHub | null,
@@ -213,33 +264,12 @@ export async function runBotOnIncoming(
 
   const session = await store.getBotSession(input.workspaceId, input.conversationId);
   const rules = await store.listBotRules(input.workspaceId);
-  if (session?.state?.menuRuleId) {
-    const menuRule = rules.find((r) => r.id === session.state.menuRuleId && r.active && r.kind === "menu");
-    const queues = await store.listQueues(input.workspaceId);
-    if (menuRule && (await handlePendingMenu({ store, hub, input, rule: menuRule, queues }))) return;
-    await store.setBotSession({ workspaceId: input.workspaceId, conversationId: input.conversationId, state: {} });
-  }
+  const ctx: BotCtx = { store, hub, input };
+  if (await handleMenuSession(ctx, rules, session)) return;
 
   const queues = await store.listQueues(input.workspaceId);
   const handled = await runActiveRules({ store, hub, input, rules, queues });
-  if (!handled) {
-    // F5: fluxos (montados por um agente externo via MCP) têm a vez antes da
-    // IA — são configuração determinística, a IA é o último recurso.
-    const flowRun = await runFlowsOnIncoming({ store, hub }, {
-      workspaceId: input.workspaceId,
-      conversationId: input.conversationId,
-      channel: input.channel,
-      text: input.text,
-    });
-    if (flowRun) return;
-  }
-  // F4: sem regra casada, IA híbrida (RAG + BYOK/Ollama) com fallback humano.
-  if (!handled && ai) {
-    await runAiOnIncoming(store, hub, ai, {
-      workspaceId: input.workspaceId,
-      conversationId: input.conversationId,
-      channel: input.channel,
-      text: input.text,
-    });
-  }
+  if (handled) return;
+  if (await runFlowFallback(ctx)) return;
+  await runAiFallback(ctx, ai);
 }

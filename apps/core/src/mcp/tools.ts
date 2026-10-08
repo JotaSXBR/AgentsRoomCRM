@@ -69,7 +69,7 @@ const INTEGRATION_TOOLS: McpToolDefinition[] = [
           scopes: z.array(z.enum(SCOPES_API)).optional(),
         })
         .parse(args);
-      return createKeyRecord(store, workspaceId, body.name, body.scopes ?? ["mcp"]);
+      return createKeyRecord({ store, workspaceId, name: body.name, scopes: body.scopes ?? ["mcp"] });
     },
   },
   {
