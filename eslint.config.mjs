@@ -68,6 +68,8 @@ export default defineConfig([
       // Baseline 2026-10-07: 3 files over 350 (postgres.ts ~1096,
       // memory.ts ~745, store.ts ~359). Explicit ignore list beats a rule
       // nobody trusts; empty the list, then drop the option.
+      // 2026-10-08: store.ts split into stores/types/* (max 117) — removed.
+      // memory.ts (1387) e postgres.ts (1951) seguem como dívida rastreada.
       "quality/max-lines": [
         "error",
         {
@@ -75,7 +77,6 @@ export default defineConfig([
           ignore: [
             "apps/core/src/stores/postgres.ts",
             "apps/core/src/stores/memory.ts",
-            "apps/core/src/stores/store.ts",
           ],
         },
       ],
