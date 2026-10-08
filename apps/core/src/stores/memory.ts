@@ -1,5 +1,11 @@
 import { randomUUID } from "node:crypto";
 import type {
+  BotMenuOption,
+  BotRuleKind,
+  BotRuleRecord,
+  BotSessionRecord,
+  BotSessionState,
+  BusinessHours,
   ContactChannelRecord,
   ContactEventRecord,
   ContactRecord,
@@ -13,12 +19,16 @@ import type {
   MetaConnectionRecord,
   NoteRecord,
   OutboundRecord,
+  QueueRecord,
+  QueueTicketRecord,
   Store,
   TagRecord,
+  TicketStatus,
   UserRecord,
   WahaSessionRecord,
   WidgetTokenRecord,
   WorkspaceRecord,
+  WorkspaceSettingsRecord,
   WorkspaceUpdates,
 } from "./store.js";
 
@@ -1092,5 +1102,286 @@ export class MemoryStore implements Store {
     };
     this.outboundQueue.set(id, updated);
     return updated;
+  }
+
+  // ---- F3: settings ----
+  readonly workspaceSettings = new Map<string, WorkspaceSettingsRecord>();
+  readonly queues = new Map<string, QueueRecord>();
+  readonly queueMembers = new Map<string, { workspaceId: string; queueId: string; userId: string; createdAt: string }>();
+  readonly tickets = new Map<string, QueueTicketRecord>();
+  readonly botRules = new Map<string, BotRuleRecord>();
+  readonly botSessions = new Map<string, BotSessionRecord>();
+
+  async getWorkspaceSettings(workspaceId: string): Promise<WorkspaceSettingsRecord | null> {
+    return this.workspaceSettings.get(workspaceId) ?? null;
+  }
+
+  async upsertWorkspaceSettings(input: {
+    workspaceId: string;
+    timezone?: string;
+    absenceMessage?: string;
+    businessHours?: BusinessHours;
+  }): Promise<WorkspaceSettingsRecord> {
+    const current = this.workspaceSettings.get(input.workspaceId);
+    const record: WorkspaceSettingsRecord = {
+      workspaceId: input.workspaceId,
+      timezone: input.timezone ?? current?.timezone ?? "America/Sao_Paulo",
+      absenceMessage:
+        input.absenceMessage ??
+        current?.absenceMessage ??
+        "Olá! Estamos fora do horário de atendimento no momento. Deixe sua mensagem que retornaremos em breve.",
+      businessHours: input.businessHours ?? current?.businessHours ?? {},
+      updatedAt: now(),
+    };
+    this.workspaceSettings.set(input.workspaceId, record);
+    return record;
+  }
+
+  // ---- F3: filas ----
+  async createQueue(input: {
+    workspaceId: string;
+    name: string;
+    channel?: string | null;
+    isDefault?: boolean;
+  }): Promise<QueueRecord> {
+    for (const q of this.queues.values()) {
+      if (q.workspaceId === input.workspaceId && q.name === input.name) {
+        throw new Error("fila_nome_em_uso");
+      }
+    }
+    if (input.isDefault) {
+      for (const q of this.queues.values()) {
+        if (q.workspaceId === input.workspaceId) this.queues.set(q.id, { ...q, isDefault: false });
+      }
+    }
+    const queue: QueueRecord = {
+      id: randomUUID(),
+      workspaceId: input.workspaceId,
+      name: input.name,
+      channel: input.channel ?? null,
+      isDefault: input.isDefault ?? false,
+      createdAt: now(),
+    };
+    this.queues.set(queue.id, queue);
+    return queue;
+  }
+
+  async listQueues(workspaceId: string): Promise<QueueRecord[]> {
+    return [...this.queues.values()]
+      .filter((q) => q.workspaceId === workspaceId)
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  }
+
+  async findQueueById(workspaceId: string, id: string): Promise<QueueRecord | null> {
+    const q = this.queues.get(id);
+    return q && q.workspaceId === workspaceId ? q : null;
+  }
+
+  async deleteQueue(workspaceId: string, id: string): Promise<boolean> {
+    const q = this.queues.get(id);
+    if (!q || q.workspaceId !== workspaceId) return false;
+    this.queues.delete(id);
+    for (const [key, m] of this.queueMembers) if (m.queueId === id) this.queueMembers.delete(key);
+    return true;
+  }
+
+  async addQueueMember(input: { workspaceId: string; queueId: string; userId: string }): Promise<void> {
+    const key = `${input.queueId}:${input.userId}`;
+    if (!this.queueMembers.has(key)) {
+      this.queueMembers.set(key, { ...input, createdAt: now() });
+    }
+  }
+
+  async removeQueueMember(workspaceId: string, queueId: string, userId: string): Promise<boolean> {
+    const key = `${queueId}:${userId}`;
+    const m = this.queueMembers.get(key);
+    if (!m || m.workspaceId !== workspaceId) return false;
+    return this.queueMembers.delete(key);
+  }
+
+  async listQueueMembers(workspaceId: string, queueId: string): Promise<string[]> {
+    return [...this.queueMembers.values()]
+      .filter((m) => m.workspaceId === workspaceId && m.queueId === queueId)
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+      .map((m) => m.userId);
+  }
+
+  // ---- F3: tickets ----
+  async enqueueTicket(input: {
+    workspaceId: string;
+    queueId: string;
+    conversationId: string;
+    channel: string;
+  }): Promise<QueueTicketRecord> {
+    const queue = this.queues.get(input.queueId);
+    if (!queue || queue.workspaceId !== input.workspaceId) throw new Error("fila_invalida");
+    const conv = this.conversations.get(input.conversationId);
+    if (!conv || conv.workspaceId !== input.workspaceId) throw new Error("conversa_invalida");
+    const ticket: QueueTicketRecord = {
+      id: randomUUID(),
+      workspaceId: input.workspaceId,
+      queueId: input.queueId,
+      conversationId: input.conversationId,
+      channel: input.channel,
+      status: "aguardando",
+      assignedUserId: null,
+      enqueuedAt: now(),
+      firstResponseAt: null,
+      resolvedAt: null,
+      createdAt: now(),
+      updatedAt: now(),
+    };
+    this.tickets.set(ticket.id, ticket);
+    return ticket;
+  }
+
+  async listTickets(
+    workspaceId: string,
+    filter?: { queueId?: string; status?: string; assignedUserId?: string },
+  ): Promise<QueueTicketRecord[]> {
+    return [...this.tickets.values()]
+      .filter(
+        (t) =>
+          t.workspaceId === workspaceId &&
+          (!filter?.queueId || t.queueId === filter.queueId) &&
+          (!filter?.status || t.status === filter.status) &&
+          (!filter?.assignedUserId || t.assignedUserId === filter.assignedUserId),
+      )
+      .sort((a, b) => b.enqueuedAt.localeCompare(a.enqueuedAt));
+  }
+
+  async findTicketById(workspaceId: string, id: string): Promise<QueueTicketRecord | null> {
+    const t = this.tickets.get(id);
+    return t && t.workspaceId === workspaceId ? t : null;
+  }
+
+  async findOpenTicketByConversation(workspaceId: string, conversationId: string): Promise<QueueTicketRecord | null> {
+    for (const t of this.tickets.values()) {
+      if (
+        t.workspaceId === workspaceId &&
+        t.conversationId === conversationId &&
+        t.status !== "resolvido" &&
+        t.status !== "cancelado"
+      ) {
+        return t;
+      }
+    }
+    return null;
+  }
+
+  async updateTicket(
+    workspaceId: string,
+    id: string,
+    patch: {
+      status?: TicketStatus;
+      assignedUserId?: string | null;
+      firstResponseAt?: string | null;
+      resolvedAt?: string | null;
+    },
+  ): Promise<QueueTicketRecord | null> {
+    const t = this.tickets.get(id);
+    if (!t || t.workspaceId !== workspaceId) return null;
+    const updated: QueueTicketRecord = {
+      ...t,
+      status: patch.status ?? t.status,
+      assignedUserId: patch.assignedUserId !== undefined ? patch.assignedUserId : t.assignedUserId,
+      firstResponseAt: patch.firstResponseAt !== undefined ? patch.firstResponseAt : t.firstResponseAt,
+      resolvedAt: patch.resolvedAt !== undefined ? patch.resolvedAt : t.resolvedAt,
+      updatedAt: now(),
+    };
+    this.tickets.set(id, updated);
+    return updated;
+  }
+
+  async markTicketFirstResponse(workspaceId: string, conversationId: string): Promise<QueueTicketRecord | null> {
+    const ticket = await this.findOpenTicketByConversation(workspaceId, conversationId);
+    if (!ticket || ticket.firstResponseAt) return ticket;
+    return this.updateTicket(workspaceId, ticket.id, {
+      firstResponseAt: now(),
+      status: ticket.status === "aguardando" ? "em_atendimento" : ticket.status,
+    });
+  }
+
+  async resolveOpenTicketForConversation(workspaceId: string, conversationId: string): Promise<QueueTicketRecord | null> {
+    const ticket = await this.findOpenTicketByConversation(workspaceId, conversationId);
+    if (!ticket) return null;
+    return this.updateTicket(workspaceId, ticket.id, { status: "resolvido", resolvedAt: now() });
+  }
+
+  // ---- F3: bot ----
+  async createBotRule(input: {
+    workspaceId: string;
+    name: string;
+    kind: BotRuleKind;
+    priority?: number;
+    active?: boolean;
+    terms?: string[];
+    reply?: string | null;
+    options?: BotMenuOption[];
+    queueId?: string | null;
+  }): Promise<BotRuleRecord> {
+    const rule: BotRuleRecord = {
+      id: randomUUID(),
+      workspaceId: input.workspaceId,
+      name: input.name,
+      kind: input.kind,
+      priority: input.priority ?? 100,
+      active: input.active ?? true,
+      terms: input.terms ?? [],
+      reply: input.reply ?? null,
+      options: input.options ?? [],
+      queueId: input.queueId ?? null,
+      createdAt: now(),
+      updatedAt: now(),
+    };
+    this.botRules.set(rule.id, rule);
+    return rule;
+  }
+
+  async listBotRules(workspaceId: string): Promise<BotRuleRecord[]> {
+    return [...this.botRules.values()]
+      .filter((r) => r.workspaceId === workspaceId)
+      .sort((a, b) => a.priority - b.priority || a.createdAt.localeCompare(b.createdAt));
+  }
+
+  async updateBotRule(
+    workspaceId: string,
+    id: string,
+    patch: Partial<{
+      name: string;
+      priority: number;
+      active: boolean;
+      terms: string[];
+      reply: string | null;
+      options: BotMenuOption[];
+      queueId: string | null;
+    }>,
+  ): Promise<BotRuleRecord | null> {
+    const rule = this.botRules.get(id);
+    if (!rule || rule.workspaceId !== workspaceId) return null;
+    const updated: BotRuleRecord = { ...rule, ...patch, updatedAt: now() };
+    this.botRules.set(id, updated);
+    return updated;
+  }
+
+  async deleteBotRule(workspaceId: string, id: string): Promise<boolean> {
+    const rule = this.botRules.get(id);
+    if (!rule || rule.workspaceId !== workspaceId) return false;
+    return this.botRules.delete(id);
+  }
+
+  async getBotSession(workspaceId: string, conversationId: string): Promise<BotSessionRecord | null> {
+    const s = this.botSessions.get(conversationId);
+    return s && s.workspaceId === workspaceId ? s : null;
+  }
+
+  async setBotSession(input: {
+    workspaceId: string;
+    conversationId: string;
+    state: BotSessionState;
+  }): Promise<BotSessionRecord> {
+    const record: BotSessionRecord = { ...input, updatedAt: now() };
+    this.botSessions.set(input.conversationId, record);
+    return record;
   }
 }

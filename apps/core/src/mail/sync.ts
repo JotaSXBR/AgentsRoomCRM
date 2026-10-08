@@ -1,4 +1,5 @@
 import { ingestIncoming } from "../intake.js";
+import { runBotOnIncoming } from "../bot/engine.js";
 import { decryptSecret } from "../lib/secrets.js";
 import type { RealtimeHub } from "../realtime/hub.js";
 import type { MailboxRecord, Store } from "../stores/store.js";
@@ -59,6 +60,12 @@ async function ingestOneMail(
   if (result.duplicate) return "duplicada";
   ctx.hub?.publish(ctx.workspaceId, { kind: "mensagem.criada", data: result.message });
   ctx.hub?.publish(ctx.workspaceId, { kind: "conversa.atualizada", data: result.conversation });
+  await runBotOnIncoming(ctx.store, ctx.hub, {
+    workspaceId: ctx.workspaceId,
+    conversationId: result.conversation.id,
+    channel: "email",
+    text: mailText(mail),
+  });
   return "ingerida";
 }
 

@@ -1,6 +1,7 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { normalizeWahaEvent, type NormalizedWahaEvent } from "../waha/adapter.js";
 import { ingestIncoming } from "../intake.js";
+import { runBotOnIncoming } from "../bot/engine.js";
 import type { Store } from "../stores/store.js";
 import type { RealtimeHub } from "../realtime/hub.js";
 
@@ -83,6 +84,12 @@ async function handleIncomingMessage(
   );
   hub.publish(session.workspaceId, { kind: "mensagem.criada", data: result.message });
   hub.publish(session.workspaceId, { kind: "conversa.atualizada", data: result.conversation });
+  await runBotOnIncoming(store, hub, {
+    workspaceId: session.workspaceId,
+    conversationId: result.conversation.id,
+    channel: "whatsapp",
+    text: event.text ?? null,
+  });
   return reply.code(200).send({ ok: true, conversationId: result.conversation.id });
 }
 

@@ -88,6 +88,10 @@ export async function registerConversationRoutes(
       const conv = await applyConversationPatch(store, workspaceId, id, body);
       if (!conv) throw HttpError.notFound("Conversa não encontrada.");
       hub.publish(workspaceId, { kind: "conversa.atualizada", data: conv });
+      if (body.status === "resolvido") {
+        const ticket = await store.resolveOpenTicketForConversation(workspaceId, id);
+        if (ticket) hub.publish(workspaceId, { kind: "fila.ticket", data: { ...ticket, event: "resolvido" } });
+      }
       return conv;
     },
   );

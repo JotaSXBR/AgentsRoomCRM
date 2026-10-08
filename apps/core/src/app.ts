@@ -22,6 +22,10 @@ import { mailRoutes } from "./routes/mail.js";
 import { outboundRoutes } from "./routes/outbound.js";
 import { webhookRoutes } from "./routes/webhooks.js";
 import { metaWebhookRoutes } from "./routes/webhooksMeta.js";
+import { settingsRoutes } from "./routes/settings.js";
+import { queueRoutes } from "./routes/queues.js";
+import { botRoutes } from "./routes/bots.js";
+import { metricsRoutes } from "./routes/metrics.js";
 import type { WhatsAppAdapter } from "./waha/adapter.js";
 import type { MetaAdapter } from "./meta/adapter.js";
 import type { MailReceiver, MailSender } from "./mail/transport.js";
@@ -91,6 +95,10 @@ async function registerCoreRoutes(
   await webhookRoutes(app, options.store, hub, {
     webhookSecret: options.waha?.webhookSecret ?? null,
   });
+  await settingsRoutes(app, options.store);
+  await queueRoutes(app, options.store, hub);
+  await botRoutes(app, options.store);
+  await metricsRoutes(app, options.store);
 }
 
 function metaConnectionOptions(

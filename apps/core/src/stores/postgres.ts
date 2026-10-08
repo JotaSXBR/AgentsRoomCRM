@@ -1,6 +1,12 @@
 import { Pool, type PoolClient } from "pg";
 import { setUserContextSql, setWorkspaceContextSql } from "@agentsroom/db";
 import type {
+  BotMenuOption,
+  BotRuleKind,
+  BotRuleRecord,
+  BotSessionRecord,
+  BotSessionState,
+  BusinessHours,
   ContactChannelRecord,
   ContactEventRecord,
   ContactRecord,
@@ -14,12 +20,16 @@ import type {
   MetaConnectionRecord,
   NoteRecord,
   OutboundRecord,
+  QueueRecord,
+  QueueTicketRecord,
   Store,
   TagRecord,
+  TicketStatus,
   UserRecord,
   WahaSessionRecord,
   WidgetTokenRecord,
   WorkspaceRecord,
+  WorkspaceSettingsRecord,
   WorkspaceUpdates,
 } from "./store.js";
 
@@ -1386,6 +1396,371 @@ export class PostgresStore implements Store {
       return rows[0] ? rowToOutbound(rows[0]) : null;
     });
   }
+
+  // ---- F3: settings ----
+  async getWorkspaceSettings(workspaceId: string): Promise<WorkspaceSettingsRecord | null> {
+    return this.withWorkspace(workspaceId, async (client) => {
+      const { rows } = await client.query(
+        "SELECT * FROM workspace_settings WHERE workspace_id = $1",
+        [workspaceId],
+      );
+      return rows[0] ? rowToWorkspaceSettings(rows[0]) : null;
+    });
+  }
+
+  async upsertWorkspaceSettings(input: {
+    workspaceId: string;
+    timezone?: string;
+    absenceMessage?: string;
+    businessHours?: BusinessHours;
+  }): Promise<WorkspaceSettingsRecord> {
+    return this.withWorkspace(input.workspaceId, async (client) => {
+      const { rows } = await client.query(
+        `INSERT INTO workspace_settings (workspace_id, timezone, absence_message, business_hours)
+         VALUES ($1, COALESCE($2, 'America/Sao_Paulo'),
+                 COALESCE($3, 'Olá! Estamos fora do horário de atendimento no momento. Deixe sua mensagem que retornaremos em breve.'),
+                 COALESCE($4::jsonb, '{}'::jsonb))
+         ON CONFLICT (workspace_id) DO UPDATE SET
+           timezone = COALESCE($2, workspace_settings.timezone),
+           absence_message = COALESCE($3, workspace_settings.absence_message),
+           business_hours = COALESCE($4::jsonb, workspace_settings.business_hours),
+           updated_at = NOW()
+         RETURNING *`,
+        [input.workspaceId, input.timezone ?? null, input.absenceMessage ?? null, input.businessHours ? JSON.stringify(input.businessHours) : null],
+      );
+      return rowToWorkspaceSettings(rows[0]);
+    });
+  }
+
+  // ---- F3: filas ----
+  async createQueue(input: {
+    workspaceId: string;
+    name: string;
+    channel?: string | null;
+    isDefault?: boolean;
+  }): Promise<QueueRecord> {
+    return this.withWorkspace(input.workspaceId, async (client) => {
+      if (input.isDefault) {
+        await client.query("UPDATE queues SET is_default = FALSE WHERE workspace_id = $1", [input.workspaceId]);
+      }
+      try {
+        const { rows } = await client.query(
+          `INSERT INTO queues (workspace_id, name, channel, is_default)
+           VALUES ($1, $2, $3, COALESCE($4, FALSE)) RETURNING *`,
+          [input.workspaceId, input.name, input.channel ?? null, input.isDefault ?? false],
+        );
+        return rowToQueue(rows[0]);
+      } catch (error) {
+        if (String((error as Error).message).includes("queues_workspace_name_key")) {
+          throw new Error("fila_nome_em_uso");
+        }
+        throw error;
+      }
+    });
+  }
+
+  async listQueues(workspaceId: string): Promise<QueueRecord[]> {
+    return this.withWorkspace(workspaceId, async (client) => {
+      const { rows } = await client.query(
+        "SELECT * FROM queues WHERE workspace_id = $1 ORDER BY created_at",
+        [workspaceId],
+      );
+      return rows.map(rowToQueue);
+    });
+  }
+
+  async findQueueById(workspaceId: string, id: string): Promise<QueueRecord | null> {
+    return this.withWorkspace(workspaceId, async (client) => {
+      const { rows } = await client.query(
+        "SELECT * FROM queues WHERE id = $1 AND workspace_id = $2",
+        [id, workspaceId],
+      );
+      return rows[0] ? rowToQueue(rows[0]) : null;
+    });
+  }
+
+  async deleteQueue(workspaceId: string, id: string): Promise<boolean> {
+    return this.withWorkspace(workspaceId, async (client) => {
+      const { rowCount } = await client.query(
+        "DELETE FROM queues WHERE id = $1 AND workspace_id = $2",
+        [id, workspaceId],
+      );
+      return (rowCount ?? 0) > 0;
+    });
+  }
+
+  async addQueueMember(input: { workspaceId: string; queueId: string; userId: string }): Promise<void> {
+    await this.withWorkspace(input.workspaceId, async (client) => {
+      await client.query(
+        `INSERT INTO queue_members (workspace_id, queue_id, user_id)
+         VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`,
+        [input.workspaceId, input.queueId, input.userId],
+      );
+    });
+  }
+
+  async removeQueueMember(workspaceId: string, queueId: string, userId: string): Promise<boolean> {
+    return this.withWorkspace(workspaceId, async (client) => {
+      const { rowCount } = await client.query(
+        "DELETE FROM queue_members WHERE workspace_id = $1 AND queue_id = $2 AND user_id = $3",
+        [workspaceId, queueId, userId],
+      );
+      return (rowCount ?? 0) > 0;
+    });
+  }
+
+  async listQueueMembers(workspaceId: string, queueId: string): Promise<string[]> {
+    return this.withWorkspace(workspaceId, async (client) => {
+      const { rows } = await client.query(
+        `SELECT user_id FROM queue_members
+         WHERE workspace_id = $1 AND queue_id = $2 ORDER BY created_at`,
+        [workspaceId, queueId],
+      );
+      return rows.map((r) => String(r.user_id));
+    });
+  }
+
+  // ---- F3: tickets ----
+  async enqueueTicket(input: {
+    workspaceId: string;
+    queueId: string;
+    conversationId: string;
+    channel: string;
+  }): Promise<QueueTicketRecord> {
+    return this.withWorkspace(input.workspaceId, async (client) => {
+      const { rows } = await client.query(
+        `INSERT INTO queue_tickets (workspace_id, queue_id, conversation_id, channel)
+         VALUES ($1, $2, $3, $4) RETURNING *`,
+        [input.workspaceId, input.queueId, input.conversationId, input.channel],
+      );
+      return rowToTicket(rows[0]);
+    });
+  }
+
+  async listTickets(
+    workspaceId: string,
+    filter?: { queueId?: string; status?: string; assignedUserId?: string },
+  ): Promise<QueueTicketRecord[]> {
+    return this.withWorkspace(workspaceId, async (client) => {
+      const clauses = ["workspace_id = $1"];
+      const params: unknown[] = [workspaceId];
+      if (filter?.queueId) { params.push(filter.queueId); clauses.push(`queue_id = $${params.length}`); }
+      if (filter?.status) { params.push(filter.status); clauses.push(`status = $${params.length}`); }
+      if (filter?.assignedUserId) { params.push(filter.assignedUserId); clauses.push(`assigned_user_id = $${params.length}`); }
+      const { rows } = await client.query(
+        `SELECT * FROM queue_tickets WHERE ${clauses.join(" AND ")} ORDER BY enqueued_at DESC LIMIT 500`,
+        params,
+      );
+      return rows.map(rowToTicket);
+    });
+  }
+
+  async findTicketById(workspaceId: string, id: string): Promise<QueueTicketRecord | null> {
+    return this.withWorkspace(workspaceId, async (client) => {
+      const { rows } = await client.query(
+        "SELECT * FROM queue_tickets WHERE id = $1 AND workspace_id = $2",
+        [id, workspaceId],
+      );
+      return rows[0] ? rowToTicket(rows[0]) : null;
+    });
+  }
+
+  async findOpenTicketByConversation(workspaceId: string, conversationId: string): Promise<QueueTicketRecord | null> {
+    return this.withWorkspace(workspaceId, async (client) => {
+      const { rows } = await client.query(
+        `SELECT * FROM queue_tickets
+         WHERE workspace_id = $1 AND conversation_id = $2 AND status NOT IN ('resolvido', 'cancelado')
+         ORDER BY enqueued_at LIMIT 1`,
+        [workspaceId, conversationId],
+      );
+      return rows[0] ? rowToTicket(rows[0]) : null;
+    });
+  }
+
+  async updateTicket(
+    workspaceId: string,
+    id: string,
+    patch: {
+      status?: TicketStatus;
+      assignedUserId?: string | null;
+      firstResponseAt?: string | null;
+      resolvedAt?: string | null;
+    },
+  ): Promise<QueueTicketRecord | null> {
+    return this.withWorkspace(workspaceId, async (client) => {
+      const { rows } = await client.query(
+        `UPDATE queue_tickets SET
+           status = COALESCE($3, status),
+           assigned_user_id = CASE WHEN $4::boolean THEN $5 ELSE assigned_user_id END,
+           first_response_at = CASE WHEN $6::boolean THEN $7 ELSE first_response_at END,
+           resolved_at = CASE WHEN $8::boolean THEN $9 ELSE resolved_at END,
+           updated_at = NOW()
+         WHERE id = $1 AND workspace_id = $2 RETURNING *`,
+        [
+          id,
+          workspaceId,
+          patch.status ?? null,
+          patch.assignedUserId !== undefined,
+          patch.assignedUserId ?? null,
+          patch.firstResponseAt !== undefined,
+          patch.firstResponseAt ?? null,
+          patch.resolvedAt !== undefined,
+          patch.resolvedAt ?? null,
+        ],
+      );
+      return rows[0] ? rowToTicket(rows[0]) : null;
+    });
+  }
+
+  async markTicketFirstResponse(workspaceId: string, conversationId: string): Promise<QueueTicketRecord | null> {
+    return this.withWorkspace(workspaceId, async (client) => {
+      const { rows } = await client.query(
+        `UPDATE queue_tickets SET
+           first_response_at = COALESCE(first_response_at, NOW()),
+           status = CASE WHEN status = 'aguardando' AND first_response_at IS NULL THEN 'em_atendimento' ELSE status END,
+           updated_at = NOW()
+         WHERE workspace_id = $1 AND conversation_id = $2 AND status NOT IN ('resolvido', 'cancelado')
+         RETURNING *`,
+        [workspaceId, conversationId],
+      );
+      return rows[0] ? rowToTicket(rows[0]) : null;
+    });
+  }
+
+  async resolveOpenTicketForConversation(workspaceId: string, conversationId: string): Promise<QueueTicketRecord | null> {
+    return this.withWorkspace(workspaceId, async (client) => {
+      const { rows } = await client.query(
+        `UPDATE queue_tickets SET status = 'resolvido', resolved_at = NOW(), updated_at = NOW()
+         WHERE workspace_id = $1 AND conversation_id = $2 AND status NOT IN ('resolvido', 'cancelado')
+         RETURNING *`,
+        [workspaceId, conversationId],
+      );
+      return rows[0] ? rowToTicket(rows[0]) : null;
+    });
+  }
+
+  // ---- F3: bot ----
+  async createBotRule(input: {
+    workspaceId: string;
+    name: string;
+    kind: BotRuleKind;
+    priority?: number;
+    active?: boolean;
+    terms?: string[];
+    reply?: string | null;
+    options?: BotMenuOption[];
+    queueId?: string | null;
+  }): Promise<BotRuleRecord> {
+    return this.withWorkspace(input.workspaceId, async (client) => {
+      const { rows } = await client.query(
+        `INSERT INTO bot_rules (workspace_id, name, kind, priority, active, terms, reply, options, queue_id)
+         VALUES ($1, $2, $3, COALESCE($4, 100), COALESCE($5, TRUE), $6::jsonb, $7, $8::jsonb, $9)
+         RETURNING *`,
+        [
+          input.workspaceId,
+          input.name,
+          input.kind,
+          input.priority ?? null,
+          input.active ?? null,
+          JSON.stringify(input.terms ?? []),
+          input.reply ?? null,
+          JSON.stringify(input.options ?? []),
+          input.queueId ?? null,
+        ],
+      );
+      return rowToBotRule(rows[0]);
+    });
+  }
+
+  async listBotRules(workspaceId: string): Promise<BotRuleRecord[]> {
+    return this.withWorkspace(workspaceId, async (client) => {
+      const { rows } = await client.query(
+        "SELECT * FROM bot_rules WHERE workspace_id = $1 ORDER BY priority, created_at",
+        [workspaceId],
+      );
+      return rows.map(rowToBotRule);
+    });
+  }
+
+  async updateBotRule(
+    workspaceId: string,
+    id: string,
+    patch: Partial<{
+      name: string;
+      priority: number;
+      active: boolean;
+      terms: string[];
+      reply: string | null;
+      options: BotMenuOption[];
+      queueId: string | null;
+    }>,
+  ): Promise<BotRuleRecord | null> {
+    return this.withWorkspace(workspaceId, async (client) => {
+      const { rows } = await client.query(
+        `UPDATE bot_rules SET
+           name = COALESCE($3, name),
+           priority = COALESCE($4, priority),
+           active = COALESCE($5, active),
+           terms = COALESCE($6::jsonb, terms),
+           reply = CASE WHEN $7::boolean THEN $8 ELSE reply END,
+           options = COALESCE($9::jsonb, options),
+           queue_id = CASE WHEN $10::boolean THEN $11 ELSE queue_id END,
+           updated_at = NOW()
+         WHERE id = $1 AND workspace_id = $2 RETURNING *`,
+        [
+          id,
+          workspaceId,
+          patch.name ?? null,
+          patch.priority ?? null,
+          patch.active ?? null,
+          patch.terms ? JSON.stringify(patch.terms) : null,
+          patch.reply !== undefined,
+          patch.reply ?? null,
+          patch.options ? JSON.stringify(patch.options) : null,
+          patch.queueId !== undefined,
+          patch.queueId ?? null,
+        ],
+      );
+      return rows[0] ? rowToBotRule(rows[0]) : null;
+    });
+  }
+
+  async deleteBotRule(workspaceId: string, id: string): Promise<boolean> {
+    return this.withWorkspace(workspaceId, async (client) => {
+      const { rowCount } = await client.query(
+        "DELETE FROM bot_rules WHERE id = $1 AND workspace_id = $2",
+        [id, workspaceId],
+      );
+      return (rowCount ?? 0) > 0;
+    });
+  }
+
+  async getBotSession(workspaceId: string, conversationId: string): Promise<BotSessionRecord | null> {
+    return this.withWorkspace(workspaceId, async (client) => {
+      const { rows } = await client.query(
+        "SELECT * FROM bot_sessions WHERE workspace_id = $1 AND conversation_id = $2",
+        [workspaceId, conversationId],
+      );
+      return rows[0] ? rowToBotSession(rows[0]) : null;
+    });
+  }
+
+  async setBotSession(input: {
+    workspaceId: string;
+    conversationId: string;
+    state: BotSessionState;
+  }): Promise<BotSessionRecord> {
+    return this.withWorkspace(input.workspaceId, async (client) => {
+      const { rows } = await client.query(
+        `INSERT INTO bot_sessions (conversation_id, workspace_id, state)
+         VALUES ($1, $2, $3::jsonb)
+         ON CONFLICT (conversation_id) DO UPDATE SET state = $3::jsonb, updated_at = NOW()
+         RETURNING *`,
+        [input.conversationId, input.workspaceId, JSON.stringify(input.state)],
+      );
+      return rowToBotSession(rows[0]);
+    });
+  }
 }
 
 function rowToWahaSession(row: Record<string, unknown>): WahaSessionRecord {
@@ -1457,6 +1832,71 @@ function rowToOutbound(row: Record<string, unknown>): OutboundRecord {
     lastError: (row.last_error as string) ?? null,
     providerMessageId: (row.provider_message_id as string) ?? null,
     createdAt: new Date(row.created_at as string).toISOString(),
+    updatedAt: new Date(row.updated_at as string).toISOString(),
+  };
+}
+
+function rowToWorkspaceSettings(row: Record<string, unknown>): WorkspaceSettingsRecord {
+  return {
+    workspaceId: String(row.workspace_id),
+    timezone: String(row.timezone),
+    absenceMessage: String(row.absence_message),
+    businessHours: (row.business_hours as BusinessHours) ?? {},
+    updatedAt: new Date(row.updated_at as string).toISOString(),
+  };
+}
+
+function rowToQueue(row: Record<string, unknown>): QueueRecord {
+  return {
+    id: String(row.id),
+    workspaceId: String(row.workspace_id),
+    name: String(row.name),
+    channel: (row.channel as string) ?? null,
+    isDefault: Boolean(row.is_default),
+    createdAt: new Date(row.created_at as string).toISOString(),
+  };
+}
+
+function rowToTicket(row: Record<string, unknown>): QueueTicketRecord {
+  const toIso = (v: unknown): string | null => (v ? new Date(v as string).toISOString() : null);
+  return {
+    id: String(row.id),
+    workspaceId: String(row.workspace_id),
+    queueId: String(row.queue_id),
+    conversationId: String(row.conversation_id),
+    channel: String(row.channel),
+    status: row.status as TicketStatus,
+    assignedUserId: (row.assigned_user_id as string) ?? null,
+    enqueuedAt: new Date(row.enqueued_at as string).toISOString(),
+    firstResponseAt: toIso(row.first_response_at),
+    resolvedAt: toIso(row.resolved_at),
+    createdAt: new Date(row.created_at as string).toISOString(),
+    updatedAt: new Date(row.updated_at as string).toISOString(),
+  };
+}
+
+function rowToBotRule(row: Record<string, unknown>): BotRuleRecord {
+  return {
+    id: String(row.id),
+    workspaceId: String(row.workspace_id),
+    name: String(row.name),
+    kind: row.kind as BotRuleKind,
+    priority: Number(row.priority),
+    active: Boolean(row.active),
+    terms: (row.terms as string[]) ?? [],
+    reply: (row.reply as string) ?? null,
+    options: (row.options as BotMenuOption[]) ?? [],
+    queueId: (row.queue_id as string) ?? null,
+    createdAt: new Date(row.created_at as string).toISOString(),
+    updatedAt: new Date(row.updated_at as string).toISOString(),
+  };
+}
+
+function rowToBotSession(row: Record<string, unknown>): BotSessionRecord {
+  return {
+    conversationId: String(row.conversation_id),
+    workspaceId: String(row.workspace_id),
+    state: (row.state as BotSessionState) ?? {},
     updatedAt: new Date(row.updated_at as string).toISOString(),
   };
 }

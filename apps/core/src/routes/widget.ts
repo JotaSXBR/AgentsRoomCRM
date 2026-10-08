@@ -3,6 +3,7 @@ import { z } from "zod";
 import { HttpError } from "@agentsroom/shared";
 import { hashToken, newInviteToken } from "../lib/tokens.js";
 import { ingestIncoming } from "../intake.js";
+import { runBotOnIncoming } from "../bot/engine.js";
 import type { Store } from "../stores/store.js";
 import { requireWorkspace } from "../plugins/tenant.js";
 import type { RealtimeHub } from "../realtime/hub.js";
@@ -131,6 +132,12 @@ export async function widgetRoutes(
       "mensagem widget ingerida",
     );
     publishIntakeResult(hub, record.workspaceId, result);
+    await runBotOnIncoming(store, hub, {
+      workspaceId: record.workspaceId,
+      conversationId: result.conversation.id,
+      channel: "widget",
+      text: body.text ?? null,
+    });
     return reply.code(201).send({
       ok: true,
       conversationId: result.conversation.id,

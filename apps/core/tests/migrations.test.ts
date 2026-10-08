@@ -21,6 +21,12 @@ const TENANT_TABLES = [
   "meta_page_index",
   "mailboxes",
   "outbound_queue",
+  "workspace_settings",
+  "queues",
+  "queue_members",
+  "queue_tickets",
+  "bot_rules",
+  "bot_sessions",
 ];
 const ALL_TABLES = ["users", "workspaces", ...TENANT_TABLES];
 

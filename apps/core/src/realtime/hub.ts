@@ -7,7 +7,9 @@ export interface RealtimeEvent {
     | "mensagem.criada"
     | "nota.criada"
     | "tag.adicionada"
-    | "tag.removida";
+    | "tag.removida"
+    | "fila.ticket"
+    | "fila.rebalance";
   workspaceId: string;
   data: unknown;
   at: string;

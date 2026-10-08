@@ -1,6 +1,7 @@
 import { Readable } from "node:stream";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { ingestIncoming } from "../intake.js";
+import { runBotOnIncoming } from "../bot/engine.js";
 import {
   normalizeMetaWebhook,
   verifyMetaSignature,
@@ -75,6 +76,12 @@ async function ingestMetaEvent(
   );
   hub.publish(workspaceId, { kind: "mensagem.criada", data: result.message });
   hub.publish(workspaceId, { kind: "conversa.atualizada", data: result.conversation });
+  await runBotOnIncoming(store, hub, {
+    workspaceId,
+    conversationId: result.conversation.id,
+    channel: event.channel,
+    text: event.text ?? null,
+  });
   return "ingerida";
 }
 
