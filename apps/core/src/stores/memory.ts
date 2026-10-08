@@ -5,10 +5,10 @@ import type {
   MailboxRecord, MembershipRecord, MemberWithUser, MessageRecord,
   MetaConnectionRecord, NoteRecord, OutboundRecord, QueueRecord,
   QueueTicketRecord, Store, TagRecord, TicketStatus, UserRecord,
-  WahaSessionRecord, WidgetTokenRecord, WorkspaceRecord, WorkspaceSettingsRecord,
-  WorkspaceUpdates,
+  WahaSessionRecord, WidgetTokenRecord, WorkspaceRecord, WorkspaceSettingsRecord, WorkspaceUpdates,
 } from "./store.js";
 import * as bot from "./memory/bot.js";
+import * as ai from "./memory/ai.js";
 import * as contacts from "./memory/contacts.js";
 import * as identity from "./memory/identity.js";
 import * as inbox from "./memory/inbox.js";
@@ -48,6 +48,8 @@ export class MemoryStore implements Store {
   readonly tickets = new Map<string, QueueTicketRecord>();
   readonly botRules = new Map<string, BotRuleRecord>();
   readonly botSessions = new Map<string, BotSessionRecord>();
+  /** Mapas da F4 agrupados (fábrica em `memory/ai.ts`) para caber no orçamento de linhas. */
+  readonly aiMaps = ai.createAiMaps();
   private readonly state: MemoryState = {
     users: this.users, workspaces: this.workspaces,
     memberships: this.memberships, invites: this.invites,
@@ -60,7 +62,7 @@ export class MemoryStore implements Store {
     metaPageIndex: this.metaPageIndex, mailboxes: this.mailboxes,
     outboundQueue: this.outboundQueue, workspaceSettings: this.workspaceSettings,
     queues: this.queues, queueMembers: this.queueMembers,
-    tickets: this.tickets, botRules: this.botRules, botSessions: this.botSessions,
+    tickets: this.tickets, botRules: this.botRules, botSessions: this.botSessions, ...this.aiMaps,
   };
   async countUsers(): Promise<number> {
     return identity.countUsers(this.state);
@@ -329,4 +331,18 @@ export class MemoryStore implements Store {
   async setBotSession(input: { workspaceId: string; conversationId: string; state: BotSessionState }): Promise<BotSessionRecord> {
     return bot.setBotSession(this.state, input);
   }
+  async getAiSettings(workspaceId: string) { return ai.getAiSettings(this.state, workspaceId); }
+  async upsertAiSettings(input: { workspaceId: string; enabled?: boolean; systemPrompt?: string; fallbackMessage?: string; maxChunks?: number }) { return ai.upsertAiSettings(this.state, input); }
+  async getAiProvider(workspaceId: string) { return ai.getAiProvider(this.state, workspaceId); }
+  async upsertAiProvider(input: { workspaceId: string; kind: import("./types/ai.js").AiProviderKind; baseUrl: string; model: string; apiKeyEnc?: string | null; priceInputPerMtok?: number | null; priceOutputPerMtok?: number | null }) { return ai.upsertAiProvider(this.state, input); }
+  async deleteAiProvider(workspaceId: string) { return ai.deleteAiProvider(this.state, workspaceId); }
+  async createKnowledgeSource(input: { workspaceId: string; kind: import("./types/ai.js").AiKnowledgeKind; title: string; content?: string | null; url?: string | null; status?: import("./types/ai.js").AiKnowledgeStatus; error?: string | null }) { return ai.createKnowledgeSource(this.state, input); }
+  async listKnowledgeSources(workspaceId: string) { return ai.listKnowledgeSources(this.state, workspaceId); }
+  async findKnowledgeSource(workspaceId: string, id: string) { return ai.findKnowledgeSource(this.state, workspaceId, id); }
+  async updateKnowledgeSource(workspaceId: string, id: string, patch: Partial<{ title: string; content: string | null; url: string | null; status: import("./types/ai.js").AiKnowledgeStatus; error: string | null }>) { return ai.updateKnowledgeSource(this.state, workspaceId, id, patch); }
+  async deleteKnowledgeSource(workspaceId: string, id: string) { return ai.deleteKnowledgeSource(this.state, workspaceId, id); }
+  async replaceKnowledgeChunks(workspaceId: string, sourceId: string, chunks: string[]) { return ai.replaceKnowledgeChunks(this.state, workspaceId, sourceId, chunks); }
+  async listKnowledgeChunks(workspaceId: string) { return ai.listKnowledgeChunks(this.state, workspaceId); }
+  async addAiLog(input: Parameters<typeof ai.addAiLog>[1]) { return ai.addAiLog(this.state, input); }
+  async listAiLogs(workspaceId: string, limit?: number) { return ai.listAiLogs(this.state, workspaceId, limit); }
 }

@@ -58,6 +58,7 @@ export async function widgetRoutes(
   app: FastifyInstance,
   store: Store,
   hub: RealtimeHub,
+  ai?: import("../ai/orchestrate.js").AiDeps,
 ): Promise<void> {
   // ---- gestão de tokens (autenticado) ----
   app.get(
@@ -137,7 +138,7 @@ export async function widgetRoutes(
       conversationId: result.conversation.id,
       channel: "widget",
       text: body.text ?? null,
-    });
+    }, ai);
     return reply.code(201).send({
       ok: true,
       conversationId: result.conversation.id,

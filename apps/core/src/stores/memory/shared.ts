@@ -1,4 +1,9 @@
 import type {
+  AiKnowledgeChunkRecord,
+  AiKnowledgeSourceRecord,
+  AiLogRecord,
+  AiProviderRecord,
+  AiSettingsRecord,
   BotRuleRecord,
   BotSessionRecord,
   ContactChannelRecord,
@@ -70,6 +75,11 @@ export interface MemoryState {
   tickets: Map<string, QueueTicketRecord>;
   botRules: Map<string, BotRuleRecord>;
   botSessions: Map<string, BotSessionRecord>;
+  aiSettings: Map<string, AiSettingsRecord>;
+  aiProviders: Map<string, AiProviderRecord>;
+  aiSources: Map<string, AiKnowledgeSourceRecord>;
+  aiChunks: Map<string, AiKnowledgeChunkRecord>;
+  aiLogs: Map<string, AiLogRecord>;
 }
 
 export function now(): string {

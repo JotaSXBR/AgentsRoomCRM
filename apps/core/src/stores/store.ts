@@ -14,6 +14,7 @@ import type { OutboundStore } from "./types/outbound.js";
 import type { QueueTicketsStore, QueuesStore } from "./types/queues.js";
 import type { WahaSessionsStore } from "./types/waha.js";
 import type { WidgetTokensStore } from "./types/widget.js";
+import type { AiStore } from "./types/ai.js";
 
 /**
  * Contrato de persistência do core (F0).
@@ -40,7 +41,8 @@ export interface Store
     WorkspaceSettingsStore,
     QueuesStore,
     QueueTicketsStore,
-    BotStore {}
+    BotStore,
+    AiStore {}
 
 export type {
   AuthUser,
@@ -85,3 +87,15 @@ export type {
   BusinessHours,
   WorkspaceSettingsRecord,
 } from "./types/bot.js";
+export type {
+  AiKnowledgeChunkRecord,
+  AiKnowledgeKind,
+  AiKnowledgeSourceRecord,
+  AiKnowledgeStatus,
+  AiLogRecord,
+  AiLogSourceRef,
+  AiOutcome,
+  AiProviderKind,
+  AiProviderRecord,
+  AiSettingsRecord,
+} from "./types/ai.js";

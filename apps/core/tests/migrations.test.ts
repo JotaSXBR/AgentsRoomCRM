@@ -27,6 +27,11 @@ const TENANT_TABLES = [
   "queue_tickets",
   "bot_rules",
   "bot_sessions",
+  "ai_settings",
+  "ai_providers",
+  "ai_knowledge_sources",
+  "ai_knowledge_chunks",
+  "ai_logs",
 ];
 const ALL_TABLES = ["users", "workspaces", ...TENANT_TABLES];
 

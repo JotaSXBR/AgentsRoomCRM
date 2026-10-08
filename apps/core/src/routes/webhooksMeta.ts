@@ -15,6 +15,7 @@ export interface MetaWebhookOptions {
   appSecret?: string | null;
   /** Token de verificação da assinatura do webhook. */
   verifyToken?: string | null;
+  ai?: import("../ai/orchestrate.js").AiDeps;
 }
 
 function rawBodyOf(request: FastifyRequest): string {
@@ -31,6 +32,7 @@ interface MetaEventCtx {
   app: FastifyInstance;
   store: Store;
   hub: RealtimeHub;
+  ai?: import("../ai/orchestrate.js").AiDeps;
 }
 
 async function ingestMetaEvent(
@@ -81,7 +83,7 @@ async function ingestMetaEvent(
     conversationId: result.conversation.id,
     channel: event.channel,
     text: event.text ?? null,
-  });
+  }, ctx.ai);
   return "ingerida";
 }
 
@@ -155,7 +157,7 @@ export async function metaWebhookRoutes(
     }
     const events = normalizeMetaWebhook(parseBody(raw, request.body));
     let received = 0;
-    const ctx: MetaEventCtx = { app, store, hub };
+    const ctx: MetaEventCtx = { app, store, hub, ai: options.ai };
     for (const event of events) {
       const outcome = await ingestMetaEvent(ctx, event);
       if (outcome === "ingerida") received += 1;

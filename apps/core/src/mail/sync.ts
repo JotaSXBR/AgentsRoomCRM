@@ -17,6 +17,7 @@ export interface MailSyncCtx {
   workspaceId: string;
   receiver: MailReceiver;
   secretsKey: string;
+  ai?: import("../ai/orchestrate.js").AiDeps;
 }
 
 function mailboxCredentials(
@@ -65,7 +66,7 @@ async function ingestOneMail(
     conversationId: result.conversation.id,
     channel: "email",
     text: mailText(mail),
-  });
+  }, ctx.ai);
   return "ingerida";
 }
 
@@ -130,10 +131,11 @@ export async function syncAllMailboxes(
   store: Store,
   receiver: MailReceiver,
   secretsKey: string,
+  ai?: import("../ai/orchestrate.js").AiDeps,
 ): Promise<Record<string, MailSyncSummary>> {
   const result: Record<string, MailSyncSummary> = {};
   for (const ws of await store.listWorkspaces()) {
-    result[ws.id] = await syncWorkspaceMailboxes({ store, hub: null, workspaceId: ws.id, receiver, secretsKey });
+    result[ws.id] = await syncWorkspaceMailboxes({ store, hub: null, workspaceId: ws.id, receiver, secretsKey, ai });
   }
   return result;
 }

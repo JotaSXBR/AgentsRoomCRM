@@ -33,6 +33,7 @@ import type {
   WorkspaceUpdates,
 } from "./store.js";
 import * as botOps from "./postgres/bot.js";
+import * as aiOps from "./postgres/ai.js";
 import * as contactsOps from "./postgres/contacts.js";
 import * as identityOps from "./postgres/identity.js";
 import * as inboxOps from "./postgres/inbox.js";
@@ -176,6 +177,20 @@ export class PostgresStore implements Store {
   async deleteBotRule(workspaceId: string, id: string): Promise<boolean> { return botOps.deleteBotRule(this.deps, workspaceId, id); }
   async getBotSession(workspaceId: string, conversationId: string): Promise<BotSessionRecord | null> { return botOps.getBotSession(this.deps, workspaceId, conversationId); }
   async setBotSession(input: { workspaceId: string; conversationId: string; state: BotSessionState; }): Promise<BotSessionRecord> { return botOps.setBotSession(this.deps, input); }
+  async getAiSettings(workspaceId: string) { return aiOps.getAiSettings(this.deps, workspaceId); }
+  async upsertAiSettings(input: { workspaceId: string; enabled?: boolean; systemPrompt?: string; fallbackMessage?: string; maxChunks?: number }) { return aiOps.upsertAiSettings(this.deps, input); }
+  async getAiProvider(workspaceId: string) { return aiOps.getAiProvider(this.deps, workspaceId); }
+  async upsertAiProvider(input: { workspaceId: string; kind: import("./store.js").AiProviderKind; baseUrl: string; model: string; apiKeyEnc?: string | null; priceInputPerMtok?: number | null; priceOutputPerMtok?: number | null }) { return aiOps.upsertAiProvider(this.deps, input); }
+  async deleteAiProvider(workspaceId: string) { return aiOps.deleteAiProvider(this.deps, workspaceId); }
+  async createKnowledgeSource(input: { workspaceId: string; kind: import("./store.js").AiKnowledgeKind; title: string; content?: string | null; url?: string | null; status?: import("./store.js").AiKnowledgeStatus; error?: string | null }) { return aiOps.createKnowledgeSource(this.deps, input); }
+  async listKnowledgeSources(workspaceId: string) { return aiOps.listKnowledgeSources(this.deps, workspaceId); }
+  async findKnowledgeSource(workspaceId: string, id: string) { return aiOps.findKnowledgeSource(this.deps, workspaceId, id); }
+  async updateKnowledgeSource(workspaceId: string, id: string, patch: Parameters<typeof aiOps.updateKnowledgeSource>[3]) { return aiOps.updateKnowledgeSource(this.deps, workspaceId, id, patch); }
+  async deleteKnowledgeSource(workspaceId: string, id: string) { return aiOps.deleteKnowledgeSource(this.deps, workspaceId, id); }
+  async replaceKnowledgeChunks(workspaceId: string, sourceId: string, chunks: string[]) { return aiOps.replaceKnowledgeChunks(this.deps, workspaceId, sourceId, chunks); }
+  async listKnowledgeChunks(workspaceId: string) { return aiOps.listKnowledgeChunks(this.deps, workspaceId); }
+  async addAiLog(input: Parameters<typeof aiOps.addAiLog>[1]) { return aiOps.addAiLog(this.deps, input); }
+  async listAiLogs(workspaceId: string, limit?: number) { return aiOps.listAiLogs(this.deps, workspaceId, limit); }
 
 }
 

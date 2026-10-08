@@ -249,6 +249,7 @@ export function rowToBotSession(row: Record<string, unknown>): BotSessionRecord 
   };
 }
 
+
 export function mailboxPatchParams(
   id: string,
   workspaceId: string,

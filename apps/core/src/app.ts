@@ -29,6 +29,8 @@ import { metricsRoutes } from "./routes/metrics.js";
 import type { WhatsAppAdapter } from "./waha/adapter.js";
 import type { MetaAdapter } from "./meta/adapter.js";
 import type { MailReceiver, MailSender } from "./mail/transport.js";
+import { aiRoutes } from "./routes/ai.js";
+import type { AiDeps } from "./ai/orchestrate.js";
 
 export interface BuildAppOptions {
   store: Store;
@@ -65,6 +67,10 @@ export interface BuildAppOptions {
     baseDelayMs?: number;
     maxDelayMs?: number;
   };
+  ai?: {
+    chatCaller?: AiDeps["chatCaller"];
+    secretsKey?: string | null;
+  };
 }
 
 function defaultS3Options(): NonNullable<BuildAppOptions["s3"]> {
@@ -90,15 +96,25 @@ async function registerCoreRoutes(
   await inboxRoutes(app, options.store, hub);
   await mediaRoutes(app, options.store, options.s3 ?? defaultS3Options());
   await webRoutes(app);
-  await widgetRoutes(app, options.store, hub);
+  await widgetRoutes(app, options.store, hub, resolveAiDeps(options));
   await whatsappRoutes(app, options.store, options.waha?.adapter ?? null);
   await webhookRoutes(app, options.store, hub, {
     webhookSecret: options.waha?.webhookSecret ?? null,
+    ai: resolveAiDeps(options),
   });
   await settingsRoutes(app, options.store);
   await queueRoutes(app, options.store, hub);
   await botRoutes(app, options.store);
   await metricsRoutes(app, options.store);
+  await aiRoutes(app, options.store, { secretsKey: resolveSecretsKey(options) });
+}
+
+function resolveSecretsKey(options: BuildAppOptions): string {
+  return options.meta?.secretsKey ?? options.mail?.secretsKey ?? options.ai?.secretsKey ?? options.jwtSecret;
+}
+
+function resolveAiDeps(options: BuildAppOptions): AiDeps | undefined {
+  return { chatCaller: options.ai?.chatCaller, secretsKey: resolveSecretsKey(options) };
 }
 
 function metaConnectionOptions(
@@ -155,7 +171,10 @@ async function registerMetaMailRoutes(
   await metaRoutes(app, options.store, hub, metaConnectionOptions(options, secretsKey));
   await mailRoutes(app, options.store, hub, mailRouteOptions(options, secretsKey));
   await outboundRoutes(app, options.store, outboundRouteOptions(options, secretsKey));
-  await metaWebhookRoutes(app, options.store, hub, metaWebhookRouteOptions(options));
+  await metaWebhookRoutes(app, options.store, hub, {
+    ...metaWebhookRouteOptions(options),
+    ai: { chatCaller: options.ai?.chatCaller, secretsKey },
+  });
 }
 
 async function registerRoutes(
@@ -164,7 +183,7 @@ async function registerRoutes(
   hub: RealtimeHub,
 ): Promise<void> {
   await registerCoreRoutes(app, options, hub);
-  const secretsKey = options.meta?.secretsKey ?? options.mail?.secretsKey ?? options.jwtSecret;
+  const secretsKey = resolveSecretsKey(options);
   await registerMetaMailRoutes(app, options, hub, secretsKey);
 }
 

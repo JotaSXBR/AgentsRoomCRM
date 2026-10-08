@@ -30,18 +30,16 @@ function startOutboundTicker(
 
 function startMailSyncTicker(
   store: Store,
-  intervalMs: number,
-  receiver: ReturnType<typeof createImapReceiver>,
-  secretsKey: string,
+  options: { intervalMs: number; receiver: ReturnType<typeof createImapReceiver>; secretsKey: string; ai?: import("./ai/orchestrate.js").AiDeps },
 ): void {
-  if (!intervalMs || intervalMs <= 0) return;
+  if (!options.intervalMs || options.intervalMs <= 0) return;
   const timer = setInterval(() => {
-    syncAllMailboxes(store, receiver, secretsKey).catch((error) => {
+    syncAllMailboxes(store, options.receiver, options.secretsKey, options.ai).catch((error) => {
       console.error("[core] mail sync falhou:", (error as Error).message);
     });
-  }, intervalMs);
+  }, options.intervalMs);
   timer.unref?.();
-  console.log(`[core] polling IMAP a cada ${intervalMs}ms.`);
+  console.log(`[core] polling IMAP a cada ${options.intervalMs}ms.`);
 }
 
 async function main(): Promise<void> {
@@ -119,6 +117,9 @@ async function main(): Promise<void> {
       baseDelayMs: config.outboundBaseDelayMs,
       maxDelayMs: config.outboundMaxDelayMs,
     },
+    ai: {
+      secretsKey: config.jwtSecret,
+    },
   });
 
   startOutboundTicker(
@@ -138,7 +139,12 @@ async function main(): Promise<void> {
       maxDelayMs: config.outboundMaxDelayMs,
     },
   );
-  startMailSyncTicker(store, config.mailSyncIntervalMs, mailReceiver, config.jwtSecret);
+  startMailSyncTicker(store, {
+    intervalMs: config.mailSyncIntervalMs,
+    receiver: mailReceiver,
+    secretsKey: config.jwtSecret,
+    ai: { secretsKey: config.jwtSecret },
+  });
 
   const shutdown = async (): Promise<void> => {
     try {

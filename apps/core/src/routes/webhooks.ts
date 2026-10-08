@@ -27,6 +27,7 @@ interface WahaRouteCtx {
   session: WahaSession;
   sessionName: string;
   reply: FastifyReply;
+  ai?: import("../ai/orchestrate.js").AiDeps;
 }
 
 async function handleSessionStatus(
@@ -49,7 +50,7 @@ async function handleIncomingMessage(
   ctx: WahaRouteCtx,
   event: Extract<NormalizedWahaEvent, { type: "message" }>,
 ): Promise<void> {
-  const { app, store, hub, session, sessionName, reply } = ctx;
+  const { app, store, hub, session, sessionName, reply, ai } = ctx;
   if (event.fromMe) {
     return reply.code(200).send({ ok: true, ignored: "fromMe" });
   }
@@ -89,7 +90,7 @@ async function handleIncomingMessage(
     conversationId: result.conversation.id,
     channel: "whatsapp",
     text: event.text ?? null,
-  });
+  }, ai);
   return reply.code(200).send({ ok: true, conversationId: result.conversation.id });
 }
 
@@ -102,7 +103,7 @@ export async function webhookRoutes(
   app: FastifyInstance,
   store: Store,
   hub: RealtimeHub,
-  options: { webhookSecret?: string | null },
+  options: { webhookSecret?: string | null; ai?: import("../ai/orchestrate.js").AiDeps },
 ): Promise<void> {
   app.post("/webhooks/waha", async (request, reply) => {
     if (!checkWebhookSecret(request, options)) {
@@ -123,10 +124,10 @@ export async function webhookRoutes(
       return reply.code(200).send({ ok: true, ignored: "sessao_desconhecida" });
     }
     if (event.type === "session.status") {
-      return handleSessionStatus({ app, store, hub, session, sessionName, reply }, event);
+      return handleSessionStatus({ app, store, hub, session, sessionName, reply, ai: options.ai }, event);
     }
     if (event.type === "message") {
-      return handleIncomingMessage({ app, store, hub, session, sessionName, reply }, event);
+      return handleIncomingMessage({ app, store, hub, session, sessionName, reply, ai: options.ai }, event);
     }
     app.log.info({ workspaceId: session.workspaceId, session: sessionName }, "evento waha ignorado");
     return reply.code(200).send({ ok: true, ignored: "tipo_desconhecido" });

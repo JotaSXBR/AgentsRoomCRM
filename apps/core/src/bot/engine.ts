@@ -3,6 +3,7 @@ import type { RealtimeHub } from "../realtime/hub.js";
 import type { BotMenuOption, BotRuleRecord, QueueRecord } from "../stores/store.js";
 import { isWithinBusinessHours } from "./businessHours.js";
 import { enqueueAndDistribute, pickDefaultQueue } from "../queues/assign.js";
+import { runAiOnIncoming, type AiDeps } from "../ai/orchestrate.js";
 
 export interface BotInput {
   workspaceId: string;
@@ -168,21 +169,23 @@ async function handleMenuRule(ctx: RuleCtx): Promise<void> {
   });
 }
 
-async function runActiveRules(ctx: ActiveRulesCtx): Promise<void> {
+async function runActiveRules(ctx: ActiveRulesCtx): Promise<boolean> {
   const rule = findMatchingRule(ctx.rules, normalizeIncomingText(ctx.input.text));
-  if (!rule) return;
+  if (!rule) return false;
   const ruleCtx: RuleCtx = { store: ctx.store, hub: ctx.hub, input: ctx.input, rule, queues: ctx.queues };
   if (rule.kind === "palavra_chave") {
     await handleKeywordRule(ruleCtx);
-    return;
+    return true;
   }
   if (rule.kind === "triagem") {
     await handleTriageRule(ruleCtx);
-    return;
+    return true;
   }
   if (rule.kind === "menu") {
     await handleMenuRule(ruleCtx);
+    return true;
   }
+  return false;
 }
 
 /**
@@ -196,6 +199,7 @@ export async function runBotOnIncoming(
   store: Store,
   hub: RealtimeHub | null,
   input: BotInput,
+  ai?: AiDeps,
 ): Promise<void> {
   const conversation = await store.findConversationById(input.workspaceId, input.conversationId);
   if (!conversation || conversation.assigneeId) return;
@@ -216,5 +220,14 @@ export async function runBotOnIncoming(
   }
 
   const queues = await store.listQueues(input.workspaceId);
-  await runActiveRules({ store, hub, input, rules, queues });
+  const handled = await runActiveRules({ store, hub, input, rules, queues });
+  // F4: sem regra casada, IA híbrida (RAG + BYOK/Ollama) com fallback humano.
+  if (!handled && ai) {
+    await runAiOnIncoming(store, hub, ai, {
+      workspaceId: input.workspaceId,
+      conversationId: input.conversationId,
+      channel: input.channel,
+      text: input.text,
+    });
+  }
 }
