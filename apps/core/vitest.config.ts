@@ -17,5 +17,9 @@ export default defineConfig({
   test: {
     include: ["tests/**/*.test.ts"],
     environment: "node",
+    // Suite completa cria dezenas de usuários com bcrypt via /auth/register;
+    // em CI sob carga um teste pesado passa de 5s. Margem global para a suite.
+    testTimeout: 15000,
+    hookTimeout: 15000,
   },
 });

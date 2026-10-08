@@ -230,7 +230,9 @@ describe("F3 bot por regras + filas + SLA", () => {
     expect(tickets.data).toHaveLength(1);
   });
 
-  it("distribuição automática equilibra entre 10+ atendentes", async () => {
+  // Teste pesado: 13 registros com bcrypt. Timeout explícito acima do
+  // testTimeout global não é necessário, mas documenta a intenção.
+  it("distribuição automática equilibra entre 10+ atendentes", { timeout: 15000 }, async () => {
     const queue = (
       await app.inject({
         method: "POST",
