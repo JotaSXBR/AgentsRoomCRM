@@ -65,21 +65,10 @@ export default defineConfig([
         { max: 150, skipBlankLines: true, skipComments: true },
       ],
       "max-nested-callbacks": ["warn", 3],
-      // Baseline 2026-10-07: 3 files over 350 (postgres.ts ~1096,
-      // memory.ts ~745, store.ts ~359). Explicit ignore list beats a rule
-      // nobody trusts; empty the list, then drop the option.
-      // 2026-10-08: store.ts split into stores/types/* (max 117) — removed.
-      // memory.ts (1387) e postgres.ts (1951) seguem como dívida rastreada.
-      "quality/max-lines": [
-        "error",
-        {
-          max: 350,
-          ignore: [
-            "apps/core/src/stores/postgres.ts",
-            "apps/core/src/stores/memory.ts",
-          ],
-        },
-      ],
+      // 2026-10-08: store.ts split into stores/types/* (max 117),
+      // memory.ts 1387->332, postgres.ts 1951->189 — ignore list emptied
+      // and the option dropped. Any file over 350 now fails.
+      "quality/max-lines": ["error", { max: 350 }],
       "quality/no-direct-console": ["error", { logger: "infra/logger" }],
       // Routes/realtime must go through stores/*, never pg/pool directly.
       // Only server.ts/seed.ts/migrate.ts may construct the pool.
