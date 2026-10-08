@@ -17,8 +17,14 @@ import { mediaRoutes } from "./routes/media.js";
 import { webRoutes } from "./routes/web.js";
 import { widgetRoutes } from "./routes/widget.js";
 import { whatsappRoutes } from "./routes/whatsapp.js";
+import { metaRoutes } from "./routes/meta.js";
+import { mailRoutes } from "./routes/mail.js";
+import { outboundRoutes } from "./routes/outbound.js";
 import { webhookRoutes } from "./routes/webhooks.js";
+import { metaWebhookRoutes } from "./routes/webhooksMeta.js";
 import type { WhatsAppAdapter } from "./waha/adapter.js";
+import type { MetaAdapter } from "./meta/adapter.js";
+import type { MailReceiver, MailSender } from "./mail/transport.js";
 
 export interface BuildAppOptions {
   store: Store;
@@ -37,6 +43,24 @@ export interface BuildAppOptions {
     adapter?: WhatsAppAdapter | null;
     webhookSecret?: string | null;
   };
+  meta?: {
+    adapter?: MetaAdapter | null;
+    appId?: string | null;
+    appSecret?: string | null;
+    verifyToken?: string | null;
+    redirectUri?: string | null;
+    secretsKey?: string | null;
+  };
+  mail?: {
+    sender?: MailSender | null;
+    receiver?: MailReceiver | null;
+    secretsKey?: string | null;
+  };
+  outbound?: {
+    maxAttempts?: number;
+    baseDelayMs?: number;
+    maxDelayMs?: number;
+  };
 }
 
 function defaultS3Options(): NonNullable<BuildAppOptions["s3"]> {
@@ -49,7 +73,7 @@ function defaultS3Options(): NonNullable<BuildAppOptions["s3"]> {
   };
 }
 
-async function registerRoutes(
+async function registerCoreRoutes(
   app: FastifyInstance,
   options: BuildAppOptions,
   hub: RealtimeHub,
@@ -67,6 +91,73 @@ async function registerRoutes(
   await webhookRoutes(app, options.store, hub, {
     webhookSecret: options.waha?.webhookSecret ?? null,
   });
+}
+
+function metaConnectionOptions(
+  options: BuildAppOptions,
+  secretsKey: string,
+): Parameters<typeof metaRoutes>[3] {
+  return {
+    adapter: options.meta?.adapter ?? null,
+    appId: options.meta?.appId ?? null,
+    redirectUri: options.meta?.redirectUri ?? null,
+    secretsKey,
+  };
+}
+
+function mailRouteOptions(
+  options: BuildAppOptions,
+  secretsKey: string,
+): Parameters<typeof mailRoutes>[3] {
+  return {
+    receiver: options.mail?.receiver ?? null,
+    secretsKey,
+  };
+}
+
+function outboundRouteOptions(
+  options: BuildAppOptions,
+  secretsKey: string,
+): Parameters<typeof outboundRoutes>[2] {
+  return {
+    metaAdapter: options.meta?.adapter ?? null,
+    mailSender: options.mail?.sender ?? null,
+    secretsKey,
+    maxAttempts: options.outbound?.maxAttempts,
+    baseDelayMs: options.outbound?.baseDelayMs,
+    maxDelayMs: options.outbound?.maxDelayMs,
+  };
+}
+
+function metaWebhookRouteOptions(
+  options: BuildAppOptions,
+): Parameters<typeof metaWebhookRoutes>[3] {
+  return {
+    appSecret: options.meta?.appSecret ?? null,
+    verifyToken: options.meta?.verifyToken ?? null,
+  };
+}
+
+async function registerMetaMailRoutes(
+  app: FastifyInstance,
+  options: BuildAppOptions,
+  hub: RealtimeHub,
+  secretsKey: string,
+): Promise<void> {
+  await metaRoutes(app, options.store, hub, metaConnectionOptions(options, secretsKey));
+  await mailRoutes(app, options.store, hub, mailRouteOptions(options, secretsKey));
+  await outboundRoutes(app, options.store, outboundRouteOptions(options, secretsKey));
+  await metaWebhookRoutes(app, options.store, hub, metaWebhookRouteOptions(options));
+}
+
+async function registerRoutes(
+  app: FastifyInstance,
+  options: BuildAppOptions,
+  hub: RealtimeHub,
+): Promise<void> {
+  await registerCoreRoutes(app, options, hub);
+  const secretsKey = options.meta?.secretsKey ?? options.mail?.secretsKey ?? options.jwtSecret;
+  await registerMetaMailRoutes(app, options, hub, secretsKey);
 }
 
 function isInvalidMediaTypeError(error: unknown): boolean {

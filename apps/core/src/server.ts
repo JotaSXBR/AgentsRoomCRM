@@ -4,6 +4,45 @@ import { MemoryStore } from "./stores/memory.js";
 import { PostgresStore, createPool } from "./stores/postgres.js";
 import { closeInfra } from "./infra.js";
 import { createWahaHttpAdapter } from "./waha/wahaHttpAdapter.js";
+import { createMetaHttpAdapter } from "./meta/metaHttpAdapter.js";
+import { createSmtpSender } from "./mail/smtpSender.js";
+import { createImapReceiver } from "./mail/imapReceiver.js";
+import { processAllWorkspaces } from "./outbound/queue.js";
+import { buildWorkspaceSender } from "./outbound/sender.js";
+import { syncAllMailboxes } from "./mail/sync.js";
+import type { Store } from "./stores/store.js";
+
+function startOutboundTicker(
+  store: Store,
+  tickMs: number,
+  build: (workspaceId: string) => Promise<ReturnType<typeof buildWorkspaceSender> | null>,
+  options: { maxAttempts: number; baseDelayMs: number; maxDelayMs: number },
+): void {
+  if (!tickMs || tickMs <= 0) return;
+  const timer = setInterval(() => {
+    processAllWorkspaces(store, build, options).catch((error) => {
+      console.error("[core] outbound tick falhou:", (error as Error).message);
+    });
+  }, tickMs);
+  timer.unref?.();
+  console.log(`[core] ticker da fila de saída a cada ${tickMs}ms.`);
+}
+
+function startMailSyncTicker(
+  store: Store,
+  intervalMs: number,
+  receiver: ReturnType<typeof createImapReceiver>,
+  secretsKey: string,
+): void {
+  if (!intervalMs || intervalMs <= 0) return;
+  const timer = setInterval(() => {
+    syncAllMailboxes(store, receiver, secretsKey).catch((error) => {
+      console.error("[core] mail sync falhou:", (error as Error).message);
+    });
+  }, intervalMs);
+  timer.unref?.();
+  console.log(`[core] polling IMAP a cada ${intervalMs}ms.`);
+}
 
 async function main(): Promise<void> {
   const config = loadConfig();
@@ -20,6 +59,25 @@ async function main(): Promise<void> {
         "Produção/staging usam postgres (ver coolify/).",
     );
   }
+
+  const metaAdapter =
+    config.metaAppId && config.metaAppSecret && config.metaRedirectUri
+      ? createMetaHttpAdapter({
+          appId: config.metaAppId,
+          appSecret: config.metaAppSecret,
+          redirectUri: config.metaRedirectUri,
+          apiVersion: config.metaApiVersion,
+        })
+      : null;
+  if (!metaAdapter) {
+    console.warn(
+      "[core] META_APP_ID/SECRET/REDIRECT_URI ausentes — OAuth Meta desabilitado " +
+        "(conexão manual continua disponível).",
+    );
+  }
+
+  const mailSender = createSmtpSender();
+  const mailReceiver = createImapReceiver();
 
   const app = await buildApp({
     store,
@@ -43,7 +101,44 @@ async function main(): Promise<void> {
         : null,
       webhookSecret: config.wahaWebhookSecret,
     },
+    meta: {
+      adapter: metaAdapter,
+      appId: config.metaAppId,
+      appSecret: config.metaAppSecret,
+      verifyToken: config.metaVerifyToken,
+      redirectUri: config.metaRedirectUri,
+      secretsKey: config.jwtSecret,
+    },
+    mail: {
+      sender: mailSender,
+      receiver: mailReceiver,
+      secretsKey: config.jwtSecret,
+    },
+    outbound: {
+      maxAttempts: config.outboundMaxAttempts,
+      baseDelayMs: config.outboundBaseDelayMs,
+      maxDelayMs: config.outboundMaxDelayMs,
+    },
   });
+
+  startOutboundTicker(
+    store,
+    config.outboundTickMs,
+    async (workspaceId) =>
+      buildWorkspaceSender({
+        store,
+        workspaceId,
+        metaAdapter,
+        mailSender,
+        secretsKey: config.jwtSecret,
+      }),
+    {
+      maxAttempts: config.outboundMaxAttempts,
+      baseDelayMs: config.outboundBaseDelayMs,
+      maxDelayMs: config.outboundMaxDelayMs,
+    },
+  );
+  startMailSyncTicker(store, config.mailSyncIntervalMs, mailReceiver, config.jwtSecret);
 
   const shutdown = async (): Promise<void> => {
     try {

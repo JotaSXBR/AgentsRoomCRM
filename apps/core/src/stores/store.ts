@@ -137,6 +137,67 @@ export interface WidgetTokenRecord {
   createdAt: string;
 }
 
+/** Conexão Meta oficial por workspace (1 Página + IG vinculado). */
+export interface MetaConnectionRecord {
+  id: string;
+  workspaceId: string;
+  pageId: string;
+  pageName: string | null;
+  igUserId: string | null;
+  /** Token da Página CIFRADO (AES-256-GCM) — nunca sai do workspace. */
+  accessTokenEnc: string;
+  tokenExpiresAt: string | null;
+  status: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** Mailbox por workspace: SMTP (envio) + IMAP (recebimento). */
+export interface MailboxRecord {
+  id: string;
+  workspaceId: string;
+  name: string;
+  fromEmail: string;
+  fromName: string | null;
+  smtpHost: string;
+  smtpPort: number;
+  smtpUser: string;
+  /** Senha SMTP CIFRADA — nunca exposta na API. */
+  smtpPassEnc: string;
+  imapHost: string;
+  imapPort: number;
+  imapUser: string;
+  /** Senha IMAP CIFRADA — nunca exposta na API. */
+  imapPassEnc: string;
+  lastUid: string | null;
+  status: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type OutboundStatus = "pendente" | "enviado" | "falhou";
+
+/** Item da fila de saída (Meta/e-mail) com backoff. */
+export interface OutboundRecord {
+  id: string;
+  workspaceId: string;
+  /** "messenger" | "instagram" | "email". */
+  channel: string;
+  conversationId: string | null;
+  messageId: string | null;
+  mailboxId: string | null;
+  toValue: string;
+  subject: string | null;
+  text: string | null;
+  status: OutboundStatus | string;
+  attempts: number;
+  nextAttemptAt: string;
+  lastError: string | null;
+  providerMessageId: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export type WahaSessionStatus =
   | "criada"
   | "qr"
@@ -354,6 +415,95 @@ export interface Store {
     contactId: string,
     channel: string,
   ): Promise<ConversationRecord | null>;
+
+  // conexão Meta oficial (1 Página + IG por workspace)
+  saveMetaConnection(input: {
+    workspaceId: string;
+    pageId: string;
+    pageName?: string | null;
+    igUserId?: string | null;
+    accessTokenEnc: string;
+    tokenExpiresAt?: string | null;
+    status?: string;
+  }): Promise<MetaConnectionRecord>;
+  getMetaConnection(workspaceId: string): Promise<MetaConnectionRecord | null>;
+  deleteMetaConnection(workspaceId: string): Promise<boolean>;
+  /** Índice global Página → workspace (só ids, usado pelo webhook). */
+  findWorkspaceIdByMetaPage(pageId: string): Promise<string | null>;
+
+  // mailboxes (SMTP + IMAP por workspace)
+  createMailbox(input: {
+    workspaceId: string;
+    name: string;
+    fromEmail: string;
+    fromName?: string | null;
+    smtpHost: string;
+    smtpPort?: number;
+    smtpUser: string;
+    smtpPassEnc: string;
+    imapHost: string;
+    imapPort?: number;
+    imapUser: string;
+    imapPassEnc: string;
+  }): Promise<MailboxRecord>;
+  listMailboxes(workspaceId: string): Promise<MailboxRecord[]>;
+  findMailboxById(workspaceId: string, id: string): Promise<MailboxRecord | null>;
+  updateMailbox(
+    workspaceId: string,
+    id: string,
+    patch: {
+      name?: string;
+      fromName?: string | null;
+      status?: string;
+      lastUid?: string | null;
+      smtpHost?: string;
+      smtpPort?: number;
+      smtpUser?: string;
+      smtpPassEnc?: string;
+      imapHost?: string;
+      imapPort?: number;
+      imapUser?: string;
+      imapPassEnc?: string;
+    },
+  ): Promise<MailboxRecord | null>;
+  deleteMailbox(workspaceId: string, id: string): Promise<boolean>;
+
+  // fila de saída com backoff
+  enqueueOutbound(input: {
+    workspaceId: string;
+    channel: string;
+    conversationId?: string | null;
+    messageId?: string | null;
+    mailboxId?: string | null;
+    toValue: string;
+    subject?: string | null;
+    text?: string | null;
+  }): Promise<OutboundRecord>;
+  listOutboundDue(
+    workspaceId: string,
+    nowIso: string,
+    limit?: number,
+  ): Promise<OutboundRecord[]>;
+  listOutbound(
+    workspaceId: string,
+    filter?: { status?: string },
+  ): Promise<OutboundRecord[]>;
+  markOutboundSent(
+    workspaceId: string,
+    id: string,
+    providerMessageId: string | null,
+  ): Promise<OutboundRecord | null>;
+  markOutboundRetry(
+    workspaceId: string,
+    id: string,
+    nextAttemptIso: string,
+    error: string,
+  ): Promise<OutboundRecord | null>;
+  markOutboundFailed(
+    workspaceId: string,
+    id: string,
+    error: string,
+  ): Promise<OutboundRecord | null>;
 }
 
 export type { WorkspaceMemberRole, WorkspaceRole };

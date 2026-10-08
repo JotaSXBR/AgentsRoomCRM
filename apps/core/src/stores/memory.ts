@@ -6,10 +6,13 @@ import type {
   ConversationRecord,
   ConversationStatus,
   InviteRecord,
+  MailboxRecord,
   MembershipRecord,
   MemberWithUser,
   MessageRecord,
+  MetaConnectionRecord,
   NoteRecord,
+  OutboundRecord,
   Store,
   TagRecord,
   UserRecord,
@@ -46,6 +49,10 @@ export class MemoryStore implements Store {
     conversationId: string | null;
     messageId: string | null;
   }>();
+  readonly metaConnections = new Map<string, MetaConnectionRecord>();
+  readonly metaPageIndex = new Map<string, string>();
+  readonly mailboxes = new Map<string, MailboxRecord>();
+  readonly outboundQueue = new Map<string, OutboundRecord>();
 
   private membershipKey(workspaceId: string, userId: string): string {
     return `${workspaceId}:${userId}`;
@@ -765,5 +772,325 @@ export class MemoryStore implements Store {
       )
       .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
     return candidates[0] ?? null;
+  }
+
+  // ---- F2b: Meta oficial ----
+
+  private assertPageFree(pageId: string, workspaceId: string): void {
+    const owner = this.metaPageIndex.get(pageId);
+    if (owner && owner !== workspaceId) {
+      throw new Error("pagina_em_uso");
+    }
+  }
+
+  private releaseOldPages(workspaceId: string, pageId: string): void {
+    // Página trocada? Remove o mapeamento antigo do workspace.
+    for (const [oldPageId, wsId] of this.metaPageIndex) {
+      if (wsId === workspaceId && oldPageId !== pageId) {
+        this.metaPageIndex.delete(oldPageId);
+      }
+    }
+  }
+
+  private pick<T>(primary: T | null | undefined, secondary: T | null | undefined, fallback: T): T {
+    return primary ?? secondary ?? fallback;
+  }
+
+  private buildMetaRecord(
+    existing: MetaConnectionRecord | undefined,
+    input: {
+      workspaceId: string;
+      pageId: string;
+      pageName?: string | null;
+      igUserId?: string | null;
+      accessTokenEnc: string;
+      tokenExpiresAt?: string | null;
+      status?: string;
+    },
+  ): MetaConnectionRecord {
+    return {
+      id: existing?.id ?? randomUUID(),
+      workspaceId: input.workspaceId,
+      pageId: input.pageId,
+      pageName: this.pick(input.pageName, existing?.pageName, null),
+      igUserId: this.pick(input.igUserId, existing?.igUserId, null),
+      accessTokenEnc: input.accessTokenEnc,
+      tokenExpiresAt: this.pick(input.tokenExpiresAt, existing?.tokenExpiresAt, null),
+      status: this.pick(input.status, existing?.status, "conectada"),
+      createdAt: existing?.createdAt ?? now(),
+      updatedAt: now(),
+    };
+  }
+
+  async saveMetaConnection(input: {
+    workspaceId: string;
+    pageId: string;
+    pageName?: string | null;
+    igUserId?: string | null;
+    accessTokenEnc: string;
+    tokenExpiresAt?: string | null;
+    status?: string;
+  }): Promise<MetaConnectionRecord> {
+    this.assertPageFree(input.pageId, input.workspaceId);
+    this.releaseOldPages(input.workspaceId, input.pageId);
+    this.metaPageIndex.set(input.pageId, input.workspaceId);
+    const record = this.buildMetaRecord(this.metaConnections.get(input.workspaceId), input);
+    this.metaConnections.set(input.workspaceId, record);
+    return record;
+  }
+
+  async getMetaConnection(workspaceId: string): Promise<MetaConnectionRecord | null> {
+    return this.metaConnections.get(workspaceId) ?? null;
+  }
+
+  async deleteMetaConnection(workspaceId: string): Promise<boolean> {
+    const existing = this.metaConnections.get(workspaceId);
+    if (!existing) return false;
+    this.metaConnections.delete(workspaceId);
+    for (const [pageId, wsId] of this.metaPageIndex) {
+      if (wsId === workspaceId) this.metaPageIndex.delete(pageId);
+    }
+    return true;
+  }
+
+  async findWorkspaceIdByMetaPage(pageId: string): Promise<string | null> {
+    return this.metaPageIndex.get(pageId) ?? null;
+  }
+
+  // ---- F2b: mailboxes ----
+
+  async createMailbox(input: {
+    workspaceId: string;
+    name: string;
+    fromEmail: string;
+    fromName?: string | null;
+    smtpHost: string;
+    smtpPort?: number;
+    smtpUser: string;
+    smtpPassEnc: string;
+    imapHost: string;
+    imapPort?: number;
+    imapUser: string;
+    imapPassEnc: string;
+  }): Promise<MailboxRecord> {
+    const record: MailboxRecord = {
+      id: randomUUID(),
+      workspaceId: input.workspaceId,
+      name: input.name,
+      fromEmail: input.fromEmail.toLowerCase(),
+      fromName: input.fromName ?? null,
+      smtpHost: input.smtpHost,
+      smtpPort: input.smtpPort ?? 587,
+      smtpUser: input.smtpUser,
+      smtpPassEnc: input.smtpPassEnc,
+      imapHost: input.imapHost,
+      imapPort: input.imapPort ?? 993,
+      imapUser: input.imapUser,
+      imapPassEnc: input.imapPassEnc,
+      lastUid: null,
+      status: "ativa",
+      createdAt: now(),
+      updatedAt: now(),
+    };
+    this.mailboxes.set(record.id, record);
+    return record;
+  }
+
+  async listMailboxes(workspaceId: string): Promise<MailboxRecord[]> {
+    return [...this.mailboxes.values()]
+      .filter((m) => m.workspaceId === workspaceId)
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  }
+
+  async findMailboxById(workspaceId: string, id: string): Promise<MailboxRecord | null> {
+    const m = this.mailboxes.get(id);
+    return m && m.workspaceId === workspaceId ? m : null;
+  }
+
+  private applyMailboxPatch(
+    m: MailboxRecord,
+    patch: {
+      name?: string;
+      fromName?: string | null;
+      status?: string;
+      lastUid?: string | null;
+      smtpHost?: string;
+      smtpPort?: number;
+      smtpUser?: string;
+      smtpPassEnc?: string;
+      imapHost?: string;
+      imapPort?: number;
+      imapUser?: string;
+      imapPassEnc?: string;
+    },
+  ): MailboxRecord {
+    return {
+      ...m,
+      name: this.pick(patch.name, m.name, m.name),
+      fromName: patch.fromName !== undefined ? patch.fromName : m.fromName,
+      status: this.pick(patch.status, m.status, m.status),
+      lastUid: patch.lastUid !== undefined ? patch.lastUid : m.lastUid,
+      smtpHost: this.pick(patch.smtpHost, m.smtpHost, m.smtpHost),
+      smtpPort: this.pick(patch.smtpPort, m.smtpPort, m.smtpPort),
+      smtpUser: this.pick(patch.smtpUser, m.smtpUser, m.smtpUser),
+      smtpPassEnc: this.pick(patch.smtpPassEnc, m.smtpPassEnc, m.smtpPassEnc),
+      imapHost: this.pick(patch.imapHost, m.imapHost, m.imapHost),
+      imapPort: this.pick(patch.imapPort, m.imapPort, m.imapPort),
+      imapUser: this.pick(patch.imapUser, m.imapUser, m.imapUser),
+      imapPassEnc: this.pick(patch.imapPassEnc, m.imapPassEnc, m.imapPassEnc),
+      updatedAt: now(),
+    };
+  }
+
+  async updateMailbox(
+    workspaceId: string,
+    id: string,
+    patch: {
+      name?: string;
+      fromName?: string | null;
+      status?: string;
+      lastUid?: string | null;
+      smtpHost?: string;
+      smtpPort?: number;
+      smtpUser?: string;
+      smtpPassEnc?: string;
+      imapHost?: string;
+      imapPort?: number;
+      imapUser?: string;
+      imapPassEnc?: string;
+    },
+  ): Promise<MailboxRecord | null> {
+    const m = this.mailboxes.get(id);
+    if (!m || m.workspaceId !== workspaceId) return null;
+    const updated = this.applyMailboxPatch(m, patch);
+    this.mailboxes.set(id, updated);
+    return updated;
+  }
+
+  async deleteMailbox(workspaceId: string, id: string): Promise<boolean> {
+    const m = this.mailboxes.get(id);
+    if (!m || m.workspaceId !== workspaceId) return false;
+    this.mailboxes.delete(id);
+    return true;
+  }
+
+  // ---- F2b: fila de saída ----
+
+  async enqueueOutbound(input: {
+    workspaceId: string;
+    channel: string;
+    conversationId?: string | null;
+    messageId?: string | null;
+    mailboxId?: string | null;
+    toValue: string;
+    subject?: string | null;
+    text?: string | null;
+  }): Promise<OutboundRecord> {
+    const record: OutboundRecord = {
+      id: randomUUID(),
+      workspaceId: input.workspaceId,
+      channel: input.channel,
+      conversationId: input.conversationId ?? null,
+      messageId: input.messageId ?? null,
+      mailboxId: input.mailboxId ?? null,
+      toValue: input.toValue,
+      subject: input.subject ?? null,
+      text: input.text ?? null,
+      status: "pendente",
+      attempts: 0,
+      nextAttemptAt: now(),
+      lastError: null,
+      providerMessageId: null,
+      createdAt: now(),
+      updatedAt: now(),
+    };
+    this.outboundQueue.set(record.id, record);
+    return record;
+  }
+
+  async listOutboundDue(
+    workspaceId: string,
+    nowIso: string,
+    limit = 25,
+  ): Promise<OutboundRecord[]> {
+    return [...this.outboundQueue.values()]
+      .filter(
+        (o) =>
+          o.workspaceId === workspaceId &&
+          o.status === "pendente" &&
+          o.nextAttemptAt <= nowIso,
+      )
+      .sort((a, b) => a.nextAttemptAt.localeCompare(b.nextAttemptAt))
+      .slice(0, limit);
+  }
+
+  async listOutbound(
+    workspaceId: string,
+    filter?: { status?: string },
+  ): Promise<OutboundRecord[]> {
+    return [...this.outboundQueue.values()]
+      .filter(
+        (o) =>
+          o.workspaceId === workspaceId &&
+          (!filter?.status || o.status === filter.status),
+      )
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+      .slice(0, 100);
+  }
+
+  async markOutboundSent(
+    workspaceId: string,
+    id: string,
+    providerMessageId: string | null,
+  ): Promise<OutboundRecord | null> {
+    const o = this.outboundQueue.get(id);
+    if (!o || o.workspaceId !== workspaceId) return null;
+    const updated: OutboundRecord = {
+      ...o,
+      status: "enviado",
+      providerMessageId,
+      lastError: null,
+      updatedAt: now(),
+    };
+    this.outboundQueue.set(id, updated);
+    return updated;
+  }
+
+  async markOutboundRetry(
+    workspaceId: string,
+    id: string,
+    nextAttemptIso: string,
+    error: string,
+  ): Promise<OutboundRecord | null> {
+    const o = this.outboundQueue.get(id);
+    if (!o || o.workspaceId !== workspaceId) return null;
+    const updated: OutboundRecord = {
+      ...o,
+      status: "pendente",
+      attempts: o.attempts + 1,
+      nextAttemptAt: nextAttemptIso,
+      lastError: error.slice(0, 500),
+      updatedAt: now(),
+    };
+    this.outboundQueue.set(id, updated);
+    return updated;
+  }
+
+  async markOutboundFailed(
+    workspaceId: string,
+    id: string,
+    error: string,
+  ): Promise<OutboundRecord | null> {
+    const o = this.outboundQueue.get(id);
+    if (!o || o.workspaceId !== workspaceId) return null;
+    const updated: OutboundRecord = {
+      ...o,
+      status: "falhou",
+      attempts: o.attempts + 1,
+      lastError: error.slice(0, 500),
+      updatedAt: now(),
+    };
+    this.outboundQueue.set(id, updated);
+    return updated;
   }
 }

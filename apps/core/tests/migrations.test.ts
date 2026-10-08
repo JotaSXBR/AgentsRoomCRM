@@ -17,6 +17,10 @@ const TENANT_TABLES = [
   "widget_tokens",
   "waha_sessions",
   "intake_events",
+  "meta_connections",
+  "meta_page_index",
+  "mailboxes",
+  "outbound_queue",
 ];
 const ALL_TABLES = ["users", "workspaces", ...TENANT_TABLES];
 

@@ -25,6 +25,18 @@ export interface CoreConfig {
   wahaApiKey: string | null;
   wahaDefaultSession: string;
   wahaWebhookSecret: string | null;
+  // F2b — Meta oficial (Graph API v21+) por workspace.
+  metaAppId: string | null;
+  metaAppSecret: string | null;
+  metaVerifyToken: string | null;
+  metaRedirectUri: string | null;
+  metaApiVersion: string;
+  // F2b — fila de saída com backoff + polling IMAP.
+  outboundMaxAttempts: number;
+  outboundBaseDelayMs: number;
+  outboundMaxDelayMs: number;
+  outboundTickMs: number;
+  mailSyncIntervalMs: number;
   s3Endpoint: string | null;
   s3Region: string;
   s3AccessKey: string | null;
@@ -71,6 +83,35 @@ function wahaSection(env: NodeJS.ProcessEnv): Pick<CoreConfig, "wahaApiUrl" | "w
   };
 }
 
+function metaSection(
+  env: NodeJS.ProcessEnv,
+): Pick<
+  CoreConfig,
+  | "metaAppId"
+  | "metaAppSecret"
+  | "metaVerifyToken"
+  | "metaRedirectUri"
+  | "metaApiVersion"
+  | "outboundMaxAttempts"
+  | "outboundBaseDelayMs"
+  | "outboundMaxDelayMs"
+  | "outboundTickMs"
+  | "mailSyncIntervalMs"
+> {
+  return {
+    metaAppId: env.META_APP_ID ?? null,
+    metaAppSecret: env.META_APP_SECRET ?? null,
+    metaVerifyToken: env.META_VERIFY_TOKEN ?? null,
+    metaRedirectUri: env.META_REDIRECT_URI ?? null,
+    metaApiVersion: env.META_API_VERSION ?? "v21.0",
+    outboundMaxAttempts: Number(env.OUTBOUND_MAX_ATTEMPTS ?? 8),
+    outboundBaseDelayMs: Number(env.OUTBOUND_BASE_DELAY_MS ?? 30_000),
+    outboundMaxDelayMs: Number(env.OUTBOUND_MAX_DELAY_MS ?? 3_600_000),
+    outboundTickMs: Number(env.OUTBOUND_TICK_MS ?? 0),
+    mailSyncIntervalMs: Number(env.MAIL_SYNC_INTERVAL_MS ?? 0),
+  };
+}
+
 function s3Section(env: NodeJS.ProcessEnv): Pick<CoreConfig, "s3Endpoint" | "s3Region" | "s3AccessKey" | "s3SecretKey" | "s3BucketMidia" | "s3BucketBackups" | "ollamaUrl"> {
   return {
     s3Endpoint: env.S3_ENDPOINT ?? null,
@@ -90,6 +131,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): CoreConfig {
     ...authSection(env),
     ...storeSection(env, databaseUrl),
     ...wahaSection(env),
+    ...metaSection(env),
     ...s3Section(env),
   };
 }
